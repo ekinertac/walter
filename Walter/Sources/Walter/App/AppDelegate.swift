@@ -37,8 +37,14 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             NSApp.terminate(nil)
         })
 
-        // Global hotkey: Alt+Space
-        hotkey = HotkeyManager(keyCode: 49, modifiers: .option) { [weak self] in
+        // Check Accessibility permission — required for the global hotkey.
+        // When running as a .app bundle, Walter itself needs the permission
+        // (unlike swift run, which piggybacks on Terminal's permission).
+        requestAccessibilityIfNeeded()
+
+        // Global hotkey from config (e.g. "Alt+Space", "Alt+Tab", "Ctrl+Space")
+        let (keyCode, modifiers) = HotkeyManager.parseBinding(config.keybindings.open)
+        hotkey = HotkeyManager(keyCode: keyCode, modifiers: modifiers) { [weak self] in
             self?.panel.toggle()
         }
 
@@ -57,6 +63,13 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             if wasVisible {
                 self.panel.show()
             }
+
+            // Re-create hotkey in case the binding changed
+            let (kc, mods) = HotkeyManager.parseBinding(self.config.keybindings.open)
+            self.hotkey = HotkeyManager(keyCode: kc, modifiers: mods) { [weak self] in
+                self?.panel.toggle()
+            }
+
             print("UI rebuilt with new config")
         }
 
@@ -64,33 +77,29 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         panel.show()
     }
 
+    /// Prompts for Accessibility permission if not already granted.
+    /// Uses AXIsProcessTrustedWithOptions which shows the native macOS dialog
+    /// ("Walter would like to control this computer") on first run.
+    private func requestAccessibilityIfNeeded() {
+        let trusted = AXIsProcessTrusted()
+        if !trusted {
+            let options = [kAXTrustedCheckOptionPrompt.takeUnretainedValue(): true] as CFDictionary
+            AXIsProcessTrustedWithOptions(options)
+            print("Accessibility: not granted — prompting user")
+        } else {
+            print("Accessibility: granted")
+        }
+    }
+
     @objc private func openConfig() {
         let configPath = config.configURL.path
-        let editorPath = config.general.editor
-
-        let knownEditors = [
-            "/Applications/Visual Studio Code.app",
-            "/Applications/Cursor.app",
-            "/Applications/Zed.app",
-            "/Applications/Sublime Text.app",
-            "/Applications/CotEditor.app",
-            "/Applications/BBEdit.app",
-            "/Applications/TextEdit.app",
-        ]
-
-        let editor: String
-        if !editorPath.isEmpty {
-            editor = editorPath
-        } else if let found = knownEditors.first(where: { FileManager.default.fileExists(atPath: $0) }) {
-            editor = found
-        } else {
-            NSWorkspace.shared.open(URL(fileURLWithPath: configPath))
-            return
-        }
+        let editorPath = config.general.editor.isEmpty
+            ? "/System/Applications/TextEdit.app"
+            : config.general.editor
 
         NSWorkspace.shared.open(
             [URL(fileURLWithPath: configPath)],
-            withApplicationAt: URL(fileURLWithPath: editor),
+            withApplicationAt: URL(fileURLWithPath: editorPath),
             configuration: NSWorkspace.OpenConfiguration()
         )
     }

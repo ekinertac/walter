@@ -1,11 +1,13 @@
 # Makefile — Walter launcher (Swift + AppKit)
 #
-#   make         → build + run (default)
-#   make build   → debug build
-#   make release → optimised release build
-#   make run     → build and launch
-#   make clean   → remove build artefacts
-#   make install → copy release binary to ~/.local/bin
+#   make             → build + run (default)
+#   make build       → debug build
+#   make release     → optimised release build
+#   make run         → build and launch
+#   make dist        → build + sign + notarize + DMG
+#   make dist-quick  → build + sign + DMG (skip notarization)
+#   make clean       → remove build artefacts
+#   make install     → copy release binary to ~/.local/bin
 
 BINARY     := Walter
 SWIFT      := swift
@@ -30,6 +32,18 @@ run: build
 .PHONY: release
 release:
 	cd $(BUILD_DIR) && $(SWIFT) build -c release
+
+# ---------------------------------------------------------------------------
+# Distribution (sign + notarize + DMG)
+# ---------------------------------------------------------------------------
+
+.PHONY: dist
+dist:
+	./dist/build-release.sh
+
+.PHONY: dist-quick
+dist-quick:
+	./dist/build-release.sh --skip-notarize
 
 # ---------------------------------------------------------------------------
 # Config bootstrap
@@ -71,6 +85,7 @@ uninstall:
 .PHONY: clean
 clean:
 	cd $(BUILD_DIR) && $(SWIFT) package clean
+	rm -rf dist/build
 
 .PHONY: help
 help:
@@ -79,6 +94,8 @@ help:
 	@echo "  build         Debug build"
 	@echo "  run           Debug build + launch (default)"
 	@echo "  release       Optimised release build"
+	@echo "  dist          Build + sign + notarize + DMG (full release)"
+	@echo "  dist-quick    Build + sign + DMG (skip notarization, for testing)"
 	@echo "  init-config   Copy example config to ~/.config/walter/"
 	@echo "  install       Release build + install to PREFIX ($(PREFIX))"
 	@echo "  uninstall     Remove installed binary"

@@ -133,43 +133,17 @@ class SystemCommands {
     // MARK: - Editor detection
 
     /// Known text editors, checked in order of preference.
-    private static let knownEditors = [
-        "/Applications/Visual Studio Code.app",
-        "/Applications/Cursor.app",
-        "/Applications/Zed.app",
-        "/Applications/Sublime Text.app",
-        "/Applications/CotEditor.app",
-        "/Applications/BBEdit.app",
-        "/Applications/Nova.app",
-        "/Applications/TextMate.app",
-        "/Applications/TextEdit.app",  // always exists, last resort
-    ]
+    /// Default: TextEdit (always exists). User can override with
+    /// `editor = "/Applications/..."` in [general] config.
+    private static let defaultEditor = "/System/Applications/TextEdit.app"
 
     private static func editorDisplayName(_ configuredEditor: String) -> String {
-        if !configuredEditor.isEmpty {
-            return URL(fileURLWithPath: configuredEditor)
-                .deletingPathExtension().lastPathComponent
-        }
-        // Auto-detect
-        if let found = knownEditors.first(where: { FileManager.default.fileExists(atPath: $0) }) {
-            return URL(fileURLWithPath: found)
-                .deletingPathExtension().lastPathComponent
-        }
-        return "default editor"
+        let path = configuredEditor.isEmpty ? defaultEditor : configuredEditor
+        return URL(fileURLWithPath: path).deletingPathExtension().lastPathComponent
     }
 
     private static func openInEditor(file: String, editor configuredEditor: String) {
-        let editorPath: String
-        if !configuredEditor.isEmpty {
-            editorPath = configuredEditor
-        } else if let found = knownEditors.first(where: { FileManager.default.fileExists(atPath: $0) }) {
-            editorPath = found
-        } else {
-            // Absolute fallback: let the OS pick
-            NSWorkspace.shared.open(URL(fileURLWithPath: file))
-            return
-        }
-
+        let editorPath = configuredEditor.isEmpty ? defaultEditor : configuredEditor
         NSWorkspace.shared.open(
             [URL(fileURLWithPath: file)],
             withApplicationAt: URL(fileURLWithPath: editorPath),

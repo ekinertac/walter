@@ -95,48 +95,59 @@ class ConfigManager {
         try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
 
         let defaults = """
-        # Walter configuration
-        # Changes are applied live — just save the file.
+# Walter configuration
+# Changes are applied live — just save the file.
 
-        [theme]
-        # Built-in themes: catppuccin-mocha, catppuccin-latte, catppuccin-macchiato,
-        #   catppuccin-frappe, nord, dracula, gruvbox, solarized-dark, solarized-light,
-        #   rose-pine, rose-pine-moon, rose-pine-dawn, tokyo-night, one-dark,
-        #   kanagawa, everforest, everforest-light, ayu-dark, ayu-light, github-light
-        # Set a theme name to use presets (individual colors below are ignored):
-        # name          = "catppuccin-mocha"
-        background    = "#1e1e2e"
-        foreground    = "#cdd6f4"
-        accent        = "#cba6f7"
-        border_radius = 12
-        font          = "SF Pro"
-        font_size     = 14
-        blur_material = "hudWindow"  # hudWindow | sidebar | popover | sheet | dark | light
+[theme]
+# Built-in themes: spotlight, catppuccin-mocha, catppuccin-latte,
+#   catppuccin-macchiato, catppuccin-frappe, nord, dracula, gruvbox,
+#   solarized-dark, solarized-light, rose-pine, rose-pine-moon,
+#   rose-pine-dawn, tokyo-night, one-dark, kanagawa, everforest,
+#   everforest-light, ayu-dark, ayu-light, github-light
+# Set a theme name to use its presets (individual colors below are ignored):
+# name          = "catppuccin-mocha"
+background    = "#1e1e2e"
+foreground    = "#cdd6f4"
+accent        = "#cba6f7"
+border_radius = 12
+font          = "SF Pro"       # any installed font name, or "system"
+font_size     = 14
+blur_material = "hudWindow"    # hudWindow | sidebar | popover | sheet
 
-        [layout]
-        width       = 780
-        max_results = 8
-        position    = "center"
-        scale       = 1.0
-        placeholder = "Search apps, calculate, convert..."
+[layout]
+width       = 780              # base width in pixels (before scaling)
+max_results = 8                # max visible result rows
+position    = "center"         # center | top
+scale       = 1.0              # UI scale: 1.0 = default, 2.0 = double
+placeholder = "Search apps, calculate, convert..."
 
-        [keybindings]
-        open  = "Alt+Space"
-        close = "Escape"
+[keybindings]
+# Modifiers: Alt/Option, Cmd/Command, Ctrl/Control, Shift
+# Keys: Space, Tab, Return, A-Z, 0-9, F1-F12, Up, Down, Left, Right
+open  = "Alt+Space"
+close = "Escape"
 
-        [search]
-        engine               = "google"  # google | duckduckgo | bing
-        show_system_commands = true
-        show_path            = true
-        # excluded_apps      = Siri, News, Stocks
-        # Extra directories to scan for .app bundles (comma-separated)
-        # app_dirs           = /opt/myapps, ~/Tools
+[general]
+# Preferred text editor for "Open Config" command.
+# Leave empty to auto-detect (VS Code, Zed, Sublime Text, etc.)
+# editor = "/Applications/Visual Studio Code.app"
 
-        [aliases]
-        # gh    = "https://github.com"
-        # mail  = "/System/Applications/Mail.app"
-        # ip    = "!curl -s ifconfig.me"
-        """
+[search]
+engine               = "google"    # google | duckduckgo | bing
+show_system_commands = true
+show_path            = true        # show file path in result subtitle
+# excluded_apps      = Siri, News, Stocks
+# Extra directories to scan for .app bundles (comma-separated):
+# app_dirs           = /opt/myapps, ~/Tools
+
+# Custom aliases — type the key to open the value.
+# Values can be URLs, app paths, or shell commands (prefix with !)
+[aliases]
+# gh    = "https://github.com"
+# mail  = "/System/Applications/Mail.app"
+# ip    = "!curl -s ifconfig.me"
+# yt    = "https://youtube.com"
+"""
 
         try? defaults.write(to: url, atomically: true, encoding: .utf8)
         print("Created default config at \(url.path)")

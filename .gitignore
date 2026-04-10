@@ -1,5 +1,6 @@
 # Swift
 .build/
+dist/
 .swiftpm/
 Package.resolved
 *.xcodeproj
