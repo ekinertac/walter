@@ -1,33 +1,29 @@
-// ConfigManager.swift — Loads config.toml into typed structs
+// ConfigManager.swift — TOML config with FSEvents hot-reload
 //
-// Reads from ~/.config/walter/config.toml. Falls back to sensible defaults
-// if the file is missing or any field is absent. Uses a minimal hand-rolled
-// TOML parser (good enough for flat key=value sections) to avoid pulling in
-// a full TOML library dependency.
-//
-// The Lua theme layer (theme.lua) will be added in a later iteration.
-//
-// Related: config-example/config.toml for the documented format.
+// Reads ~/.config/walter/config.toml, creates it on first run,
+// watches for changes, and re-parses + fires onChange on save.
 
 import Foundation
 
 class ConfigManager {
 
     struct Theme {
+        var name: String?                       // built-in theme name (overrides individual colors)
         var background: String = "#1e1e2e"
         var foreground: String = "#cdd6f4"
         var accent: String = "#cba6f7"
         var borderRadius: Float = 12.0
         var font: String = "SF Pro"
         var fontSize: Int = 14
+        var blurMaterial: String = "hudWindow"   // hudWindow | sidebar | popover | sheet | dark | light
     }
 
     struct Layout {
         var width: Int = 780
         var maxResults: Int = 8
         var position: String = "center"
-        /// Multiplier for all UI dimensions. 1.0 = default, 1.5 = 50% bigger, etc.
         var scale: Float = 1.0
+        var placeholder: String = "Search apps, calculate, convert..."
     }
 
     struct Keybindings {
@@ -35,12 +31,28 @@ class ConfigManager {
         var close: String = "Escape"
     }
 
+    struct Search {
+        var engine: String = "google"
+        var showSystemCommands: Bool = true
+        var showPath: Bool = true
+        var excludedApps: [String] = []
+        var extraAppDirs: [String] = []
+    }
+
+    struct General {
+        var editor: String = ""                 // path to preferred text editor, empty = auto-detect
+    }
+
     var theme = Theme()
     var layout = Layout()
     var keybindings = Keybindings()
+    var general = General()
+    var search = Search()
+    var aliases: [String: String] = [:]
 
-    /// Scale a base dimension by the layout.scale factor.
-    /// Usage: `config.s(28)` → 28 at scale 1.0, 42 at scale 1.5
+    var onChange: (() -> Void)?
+    private var fileMonitor: DispatchSourceFileSystemObject?
+
     func s(_ base: CGFloat) -> CGFloat {
         base * CGFloat(layout.scale)
     }
@@ -48,18 +60,33 @@ class ConfigManager {
     init() {
         ensureConfigExists()
         load()
+        startWatching()
     }
 
-    private var configURL: URL {
+    deinit { stopWatching() }
+
+    var configURL: URL {
         if let env = ProcessInfo.processInfo.environment["WALTER_CONFIG"] {
             return URL(fileURLWithPath: env)
         }
-        let configDir = FileManager.default.homeDirectoryForCurrentUser
-            .appendingPathComponent(".config/walter")
-        return configDir.appendingPathComponent("config.toml")
+        return FileManager.default.homeDirectoryForCurrentUser
+            .appendingPathComponent(".config/walter/config.toml")
     }
 
-    /// Creates ~/.config/walter/config.toml with documented defaults on first run.
+    func reload() {
+        theme = Theme()
+        layout = Layout()
+        keybindings = Keybindings()
+        general = General()
+        search = Search()
+        aliases = [:]
+        load()
+        print("Config hot-reloaded")
+        DispatchQueue.main.async { [weak self] in self?.onChange?() }
+    }
+
+    // MARK: - First-run default config
+
     private func ensureConfigExists() {
         let url = configURL
         guard !FileManager.default.fileExists(atPath: url.path) else { return }
@@ -69,45 +96,61 @@ class ConfigManager {
 
         let defaults = """
         # Walter configuration
-        # Edit to taste — Walter reloads on next launch.
-        # All fields are optional; missing values use the defaults shown here.
+        # Changes are applied live — just save the file.
 
         [theme]
+        # Built-in themes: catppuccin-mocha, catppuccin-latte, catppuccin-macchiato,
+        #   catppuccin-frappe, nord, dracula, gruvbox, solarized-dark, solarized-light,
+        #   rose-pine, rose-pine-moon, rose-pine-dawn, tokyo-night, one-dark,
+        #   kanagawa, everforest, everforest-light, ayu-dark, ayu-light, github-light
+        # Set a theme name to use presets (individual colors below are ignored):
+        # name          = "catppuccin-mocha"
         background    = "#1e1e2e"
         foreground    = "#cdd6f4"
         accent        = "#cba6f7"
         border_radius = 12
         font          = "SF Pro"
         font_size     = 14
+        blur_material = "hudWindow"  # hudWindow | sidebar | popover | sheet | dark | light
 
         [layout]
         width       = 780
         max_results = 8
         position    = "center"
-        scale       = 1.0           # UI scale: 1.0 = default, 1.5 = 50% bigger
+        scale       = 1.0
+        placeholder = "Search apps, calculate, convert..."
 
         [keybindings]
         open  = "Alt+Space"
         close = "Escape"
+
+        [search]
+        engine               = "google"  # google | duckduckgo | bing
+        show_system_commands = true
+        show_path            = true
+        # excluded_apps      = Siri, News, Stocks
+        # Extra directories to scan for .app bundles (comma-separated)
+        # app_dirs           = /opt/myapps, ~/Tools
+
+        [aliases]
+        # gh    = "https://github.com"
+        # mail  = "/System/Applications/Mail.app"
+        # ip    = "!curl -s ifconfig.me"
         """
 
         try? defaults.write(to: url, atomically: true, encoding: .utf8)
         print("Created default config at \(url.path)")
     }
 
+    // MARK: - TOML parser
+
     private func load() {
-        guard FileManager.default.fileExists(atPath: configURL.path) else {
-            print("Config not found at \(configURL.path), using defaults")
+        guard FileManager.default.fileExists(atPath: configURL.path),
+              let content = try? String(contentsOf: configURL, encoding: .utf8) else {
+            print("Config not found or unreadable, using defaults")
             return
         }
 
-        guard let content = try? String(contentsOf: configURL, encoding: .utf8) else {
-            print("Failed to read config at \(configURL.path)")
-            return
-        }
-
-        // Minimal TOML parser: handles [section] headers and key = value lines.
-        // Supports string ("..."), integer, and float values.
         var currentSection = ""
         for line in content.components(separatedBy: .newlines) {
             let trimmed = line.trimmingCharacters(in: .whitespaces)
@@ -123,8 +166,6 @@ class ConfigManager {
             let key = parts[0].trimmingCharacters(in: .whitespaces)
             var raw = parts[1].trimmingCharacters(in: .whitespaces)
 
-            // Strip inline comments: `value # comment` → `value`
-            // But not inside quoted strings.
             if !raw.hasPrefix("\"") {
                 if let commentIdx = raw.firstIndex(of: "#") {
                     raw = String(raw[..<commentIdx]).trimmingCharacters(in: .whitespaces)
@@ -133,22 +174,99 @@ class ConfigManager {
             let value = raw.trimmingCharacters(in: CharacterSet(charactersIn: "\""))
 
             switch (currentSection, key) {
+            // Theme
+            case ("theme", "name"):          theme.name = value
             case ("theme", "background"):    theme.background = value
             case ("theme", "foreground"):    theme.foreground = value
             case ("theme", "accent"):        theme.accent = value
             case ("theme", "border_radius"): theme.borderRadius = Float(value) ?? theme.borderRadius
             case ("theme", "font"):          theme.font = value
             case ("theme", "font_size"):     theme.fontSize = Int(value) ?? theme.fontSize
+            case ("theme", "blur_material"): theme.blurMaterial = value
+            // Layout
             case ("layout", "width"):        layout.width = Int(value) ?? layout.width
             case ("layout", "max_results"):  layout.maxResults = Int(value) ?? layout.maxResults
             case ("layout", "position"):     layout.position = value
             case ("layout", "scale"):        layout.scale = Float(value) ?? layout.scale
+            case ("layout", "placeholder"):  layout.placeholder = value
+            // Keybindings
             case ("keybindings", "open"):    keybindings.open = value
             case ("keybindings", "close"):   keybindings.close = value
+            // Search
+            // General
+            case ("general", "editor"):      general.editor = value
+            // Search
+            case ("search", "engine"):       search.engine = value
+            case ("search", "show_system_commands"): search.showSystemCommands = (value == "true")
+            case ("search", "show_path"):    search.showPath = (value == "true")
+            case ("search", "excluded_apps"):
+                search.excludedApps = value.split(separator: ",").map {
+                    $0.trimmingCharacters(in: .whitespaces)
+                }
+            case ("search", "app_dirs"):
+                let home = FileManager.default.homeDirectoryForCurrentUser.path
+                search.extraAppDirs = value.split(separator: ",").map {
+                    $0.trimmingCharacters(in: .whitespaces)
+                        .replacingOccurrences(of: "~", with: home)
+                }
+            // Aliases
+            case ("aliases", _):             aliases[key] = value
             default: break
             }
         }
 
+        // Apply built-in theme preset (overrides individual colors)
+        if let themeName = theme.name?.lowercased(),
+           let preset = builtinThemes[themeName] {
+            theme.background = preset.background
+            theme.foreground = preset.foreground
+            theme.accent = preset.accent
+            print("Theme applied: \(themeName)")
+        }
+
         print("Config loaded from \(configURL.path)")
+    }
+
+    // MARK: - File watcher
+    //
+    // Uses DispatchSource to watch the config file. Atomic writes (used by
+    // most editors and our own write(to:atomically:)) replace the file via
+    // rename, which invalidates the old file descriptor. So after each event
+    // we tear down and re-create the watcher on the new file.
+
+    private func startWatching() {
+        stopWatching()
+
+        let path = configURL.path
+        let fd = open(path, O_EVTONLY)
+        guard fd >= 0 else {
+            print("ConfigManager: can't watch \(path)")
+            return
+        }
+
+        let source = DispatchSource.makeFileSystemObjectSource(
+            fileDescriptor: fd,
+            eventMask: [.write, .rename, .delete, .attrib],
+            queue: .main
+        )
+        source.setEventHandler { [weak self] in
+            guard let self else { return }
+            // Stop old watcher (fd is now stale after atomic rename)
+            self.stopWatching()
+            // Delay briefly — the new file may not be fully in place yet
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
+                self.reload()
+                // Re-create watcher on the new file
+                self.startWatching()
+            }
+        }
+        source.setCancelHandler { close(fd) }
+        source.resume()
+        fileMonitor = source
+    }
+
+    private func stopWatching() {
+        fileMonitor?.cancel()
+        fileMonitor = nil
     }
 }

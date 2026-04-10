@@ -37,11 +37,10 @@ struct AppEntry {
 
 class AppIndex {
 
-    /// All known directories where .app bundles live on macOS.
-    /// Ordered by likelihood — /Applications first for fastest results.
-    private static let watchedDirs: [String] = {
+    /// Standard directories where .app bundles live on macOS.
+    private static let defaultDirs: [String] = {
         let home = FileManager.default.homeDirectoryForCurrentUser.path
-        let candidates = [
+        return [
             "/Applications",
             "/Applications/Utilities",
             "/System/Applications",
@@ -51,18 +50,24 @@ class AppIndex {
             "\(home)/Applications",
             "/Applications/MacPorts",
         ]
-        return candidates.filter { FileManager.default.fileExists(atPath: $0) }
+    }()
+
+    /// Dirs that should be scanned recursively (user-level app folders
+    /// may have subfolders like ~/Applications/Setapp/).
+    private static let recursiveDirs: Set<String> = {
+        let home = FileManager.default.homeDirectoryForCurrentUser.path
+        return ["\(home)/Applications"]
     }()
 
     /// Full list of indexed apps — used by LauncherEngine for fuzzy matching.
     private(set) var allEntries: [AppEntry] = []
     private var eventStream: FSEventStreamRef?
     private let onChange: () -> Void
+    private var extraDirs: [String] = []
 
-    /// `onChange` is called (on main thread) whenever the index is rebuilt,
-    /// so the UI can refresh if the panel is open.
-    init(onChange: @escaping () -> Void = {}) {
+    init(extraDirs: [String] = [], onChange: @escaping () -> Void = {}) {
         self.onChange = onChange
+        self.extraDirs = extraDirs
         rebuildIndex()
         startWatching()
     }
@@ -85,40 +90,65 @@ class AppIndex {
 
     /// Scans all watched directories and rebuilds the entries array.
     /// Fast: ~50-100ms for a typical macOS install.
+    /// All directories to scan = defaults + extra from config.
+    private var allDirs: [String] {
+        let combined = Self.defaultDirs + extraDirs
+        return combined.filter { FileManager.default.fileExists(atPath: $0) }
+    }
+
     private func rebuildIndex() {
-        var seen = Set<String>() // deduplicate by path
+        var seen = Set<String>()
         var newEntries: [AppEntry] = []
 
-        for dir in Self.watchedDirs {
-            let dirURL = URL(fileURLWithPath: dir)
-            guard let contents = try? FileManager.default.contentsOfDirectory(
-                at: dirURL,
-                includingPropertiesForKeys: [.isDirectoryKey],
-                options: [.skipsHiddenFiles]
-            ) else { continue }
+        for dir in allDirs {
+            let recursive = Self.recursiveDirs.contains(dir) || extraDirs.contains(dir)
+            let apps = findApps(in: URL(fileURLWithPath: dir), recursive: recursive)
 
-            for url in contents where url.pathExtension == "app" {
+            for url in apps {
                 let path = url.path
                 guard !seen.contains(path) else { continue }
                 seen.insert(path)
 
                 let name = appDisplayName(at: url)
                 let icon = NSWorkspace.shared.icon(forFile: path)
-                // Size the icon once — avoids repeated scaling during rendering
-                icon.size = NSSize(width: 64, height: 64) // oversized so it stays crisp at any scale
+                icon.size = NSSize(width: 64, height: 64)
 
                 newEntries.append(AppEntry(
-                    name: name,
-                    path: path,
-                    nameLower: name.lowercased(),
-                    icon: icon
+                    name: name, path: path,
+                    nameLower: name.lowercased(), icon: icon
                 ))
             }
         }
 
         newEntries.sort { $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending }
         allEntries = newEntries
-        print("AppIndex: \(allEntries.count) apps indexed from \(Self.watchedDirs.count) directories")
+        print("AppIndex: \(allEntries.count) apps indexed from \(allDirs.count) directories")
+    }
+
+    /// Finds .app bundles in a directory. When `recursive` is true, also
+    /// scans subfolders (e.g. ~/Applications/Setapp/*.app) — but stops
+    /// recursing into .app bundles themselves (they contain nested .app).
+    private func findApps(in directory: URL, recursive: Bool) -> [URL] {
+        let fm = FileManager.default
+        guard let contents = try? fm.contentsOfDirectory(
+            at: directory,
+            includingPropertiesForKeys: [.isDirectoryKey],
+            options: [.skipsHiddenFiles]
+        ) else { return [] }
+
+        var apps: [URL] = []
+
+        for url in contents {
+            if url.pathExtension == "app" {
+                apps.append(url)
+            } else if recursive,
+                      (try? url.resourceValues(forKeys: [.isDirectoryKey]))?.isDirectory == true {
+                // Recurse into subdirectories (but not into .app bundles)
+                apps += findApps(in: url, recursive: true)
+            }
+        }
+
+        return apps
     }
 
     /// Reads the display name from the bundle's Info.plist.
@@ -147,7 +177,7 @@ class AppIndex {
     /// app deleted, app renamed). Same mechanism as your screenshot watcher
     /// launchd plist — but native Swift, no shell scripts needed.
     private func startWatching() {
-        let paths = Self.watchedDirs as CFArray
+        let paths = allDirs as CFArray
 
         var context = FSEventStreamContext(
             version: 0,
@@ -173,7 +203,7 @@ class AppIndex {
         eventStream = stream
         FSEventStreamSetDispatchQueue(stream, DispatchQueue.main)
         FSEventStreamStart(stream)
-        print("AppIndex: FSEvents watcher active on \(Self.watchedDirs.count) directories")
+        print("AppIndex: FSEvents watcher active on \(allDirs.count) directories")
     }
 
     private func stopWatching() {

@@ -1,12 +1,12 @@
 // LauncherEngine.swift — Core search and launch logic
 //
-// Combines three result sources:
-//   1. App search (fuzzy matched, frecency-boosted)
-//   2. Web search fallback (when no/few app results match)
-//
-// Fuzzy matching: "vsc" finds "Visual Studio Code", "ff" finds "Firefox".
-// Frecency: apps you launch often and recently rank higher.
-// Web fallback: always shown as the last result — Enter opens the default browser.
+// Result sources (in display order):
+//   1. Calculator (if query looks like math)
+//   2. Currency / unit conversion (if query matches pattern)
+//   3. Aliases (exact prefix match from [aliases] config)
+//   4. System commands (lock, sleep, restart, etc.)
+//   5. Apps (fuzzy matched, frecency-boosted)
+//   6. Web search fallback (always last)
 //
 // Called by: LauncherPanelController on every keystroke.
 
@@ -24,6 +24,9 @@ enum ResultAction {
     case shell(String)
     case copy(String)
     case url(String)
+    case systemCommand(SystemCommand)
+    case enterThemePicker          // switches UI to theme browsing mode
+    case applyTheme(String)        // applies a theme by name and writes to config
 }
 
 class LauncherEngine {
@@ -32,9 +35,13 @@ class LauncherEngine {
     private let frecency = FrecencyTracker()
     private let calculator = Calculator()
     private let converter = Converter()
+    private var systemCommands: SystemCommands!
+    private weak var config: ConfigManager?
 
-    init(onIndexChanged: @escaping () -> Void = {}) {
-        appIndex = AppIndex(onChange: onIndexChanged)
+    init(config: ConfigManager, extraAppDirs: [String] = [], onIndexChanged: @escaping () -> Void = {}) {
+        self.config = config
+        systemCommands = SystemCommands(config: config)
+        appIndex = AppIndex(extraDirs: extraAppDirs, onChange: onIndexChanged)
     }
 
     func search(query: String) -> [SearchResult] {
@@ -43,7 +50,7 @@ class LauncherEngine {
 
         var results: [SearchResult] = []
 
-        // Calculator — shown first if the query looks like math
+        // 1. Calculator
         if let calc = calculator.evaluate(query: q) {
             let icon = NSImage(systemSymbolName: "equal.circle", accessibilityDescription: "Calculator")
             results.append(SearchResult(
@@ -54,7 +61,7 @@ class LauncherEngine {
             ))
         }
 
-        // Currency / unit conversion
+        // 2. Currency / unit conversion
         let conversions = converter.convert(query: q)
         if !conversions.isEmpty {
             let icon = NSImage(systemSymbolName: "arrow.left.arrow.right", accessibilityDescription: "Convert")
@@ -68,37 +75,89 @@ class LauncherEngine {
             }
         }
 
-        // Fuzzy match all apps, score and rank
+        // 3. Aliases from config
+        if let aliases = config?.aliases {
+            let ql = q.lowercased()
+            for (key, value) in aliases {
+                guard fuzzyMatch(query: ql, target: key).matched else { continue }
+                let icon = NSImage(systemSymbolName: "link", accessibilityDescription: "Alias")
+                let action: ResultAction
+                let subtitle: String
+
+                if value.hasPrefix("!") {
+                    // Shell command alias: !curl -s ifconfig.me
+                    let cmd = String(value.dropFirst())
+                    action = .shell(cmd)
+                    subtitle = "Run: \(cmd)"
+                } else if value.hasPrefix("http://") || value.hasPrefix("https://") {
+                    action = .url(value)
+                    subtitle = value
+                } else {
+                    action = .open(value)
+                    subtitle = value
+                }
+
+                results.append(SearchResult(title: key, subtitle: subtitle, icon: icon, action: action))
+            }
+        }
+
+        // 4. "Change Theme" action — fuzzy matched like any other result
+        let themeMatch = fuzzyMatch(query: q, target: "Change Theme")
+        if themeMatch.matched {
+            let icon = NSImage(systemSymbolName: "paintpalette", accessibilityDescription: "Theme")
+            results.append(SearchResult(
+                title: "Change Theme",
+                subtitle: "Browse and apply built-in themes",
+                icon: icon,
+                action: .enterThemePicker
+            ))
+        }
+
+        // 5. System commands
+        if config?.search.showSystemCommands != false {
+            let sysResults = systemCommands.search(query: q)
+            for item in sysResults.prefix(4) {
+                let icon = NSImage(systemSymbolName: item.command.iconName, accessibilityDescription: item.command.name)
+                results.append(SearchResult(
+                    title: item.command.name,
+                    subtitle: item.command.subtitle,
+                    icon: icon,
+                    action: .systemCommand(item.command)
+                ))
+            }
+        }
+
+        // 5. Apps (fuzzy + frecency)
+        let excluded = Set(config?.search.excludedApps.map { $0.lowercased() } ?? [])
         var scored: [(entry: AppEntry, score: Double)] = []
 
         for entry in appIndex.allEntries {
+            if excluded.contains(entry.nameLower) { continue }
             let result = fuzzyMatch(query: q, target: entry.name)
             guard result.matched else { continue }
-
-            // Combine fuzzy score with frecency boost
             let frecencyBoost = frecency.score(for: entry.path) * 10
-            let total = Double(result.score) + frecencyBoost
-            scored.append((entry, total))
+            scored.append((entry, Double(result.score) + frecencyBoost))
         }
 
-        // Sort by combined score descending
         scored.sort { $0.score > $1.score }
 
-        results += scored.prefix(20).map { item -> SearchResult in
+        let showPath = config?.search.showPath ?? true
+        results += scored.prefix(20).map { item in
             SearchResult(
                 title: item.entry.name,
-                subtitle: item.entry.path,
+                subtitle: showPath ? item.entry.path : "",
                 icon: item.entry.icon,
                 action: .open(item.entry.path)
             )
         }
 
-        // Web search fallback — always appended as the last option
+        // 6. Web search fallback
         let encoded = q.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? q
-        let webURL = "https://www.google.com/search?q=\(encoded)"
+        let engine = config?.search.engine ?? "google"
+        let (engineName, webURL) = searchEngineURL(engine: engine, query: encoded)
         let webIcon = NSImage(systemSymbolName: "magnifyingglass.circle", accessibilityDescription: "Web search")
         results.append(SearchResult(
-            title: "Search Google for \"\(q)\"",
+            title: "Search \(engineName) for \"\(q)\"",
             subtitle: "Open in default browser",
             icon: webIcon,
             action: .url(webURL)
@@ -125,6 +184,108 @@ class LauncherEngine {
         case .copy(let text):
             NSPasteboard.general.clearContents()
             NSPasteboard.general.setString(text, forType: .string)
+        case .systemCommand(let cmd):
+            if cmd.needsConfirmation {
+                guard SystemCommands.confirm(action: cmd.name) else { return }
+            }
+            cmd.action()
+        case .enterThemePicker, .applyTheme:
+            // Handled by LauncherPanelController, not here
+            break
+        }
+    }
+
+    /// Returns all built-in themes as results, filtered by query.
+    /// Used when the UI is in theme-picker mode.
+    func themeResults(filter: String) -> [SearchResult] {
+        let currentTheme = config?.theme.name?.lowercased()
+        let icon = NSImage(systemSymbolName: "paintpalette", accessibilityDescription: "Theme")
+
+        let allThemes: [(name: String, group: String)] =
+            [("spotlight", "System"),
+             ("catppuccin-mocha", "Dark"), ("catppuccin-macchiato", "Dark"),
+             ("catppuccin-frappe", "Dark"), ("catppuccin-latte", "Light"),
+             ("nord", "Dark"), ("dracula", "Dark"), ("gruvbox", "Dark"),
+             ("solarized-dark", "Dark"), ("solarized-light", "Light"),
+             ("rose-pine", "Dark"), ("rose-pine-moon", "Dark"), ("rose-pine-dawn", "Light"),
+             ("tokyo-night", "Dark"), ("one-dark", "Dark"), ("kanagawa", "Dark"),
+             ("everforest", "Dark"), ("everforest-light", "Light"),
+             ("ayu-dark", "Dark"), ("ayu-light", "Light"), ("github-light", "Light")]
+
+        let q = filter.trimmingCharacters(in: .whitespaces)
+
+        return allThemes.compactMap { theme in
+            if !q.isEmpty {
+                let match = fuzzyMatch(query: q, target: theme.name)
+                guard match.matched else { return nil }
+            }
+            let displayName = theme.name.split(separator: "-")
+                .map { $0.prefix(1).uppercased() + $0.dropFirst() }
+                .joined(separator: " ")
+            let isCurrent = theme.name == currentTheme
+            let subtitle = "\(theme.group)\(isCurrent ? " — current" : "")"
+            return SearchResult(
+                title: displayName,
+                subtitle: subtitle,
+                icon: icon,
+                action: .applyTheme(theme.name)
+            )
+        }
+    }
+
+    /// Writes the theme name into config.toml. Hot-reload picks it up.
+    func applyTheme(name: String) {
+        guard let config = config else { return }
+        let url = config.configURL
+        guard var content = try? String(contentsOf: url, encoding: .utf8) else { return }
+
+        let lines = content.components(separatedBy: "\n")
+        var result: [String] = []
+        var inTheme = false
+        var nameWritten = false
+
+        for line in lines {
+            let trimmed = line.trimmingCharacters(in: .whitespaces)
+
+            if trimmed.hasPrefix("[") && trimmed.hasSuffix("]") {
+                if inTheme && !nameWritten {
+                    result.append("name = \"\(name)\"")
+                    nameWritten = true
+                }
+                let section = String(trimmed.dropFirst().dropLast())
+                inTheme = (section == "theme")
+            }
+
+            if inTheme {
+                let key = trimmed.split(separator: "=", maxSplits: 1).first?
+                    .trimmingCharacters(in: .whitespaces) ?? ""
+                if key == "name" || key == "# name" {
+                    result.append("name = \"\(name)\"")
+                    nameWritten = true
+                    continue
+                }
+            }
+
+            result.append(line)
+        }
+
+        if !nameWritten {
+            // Shouldn't happen, but just in case
+            result.insert("name = \"\(name)\"", at: result.firstIndex(of: "[theme]")?.advanced(by: 1) ?? result.endIndex)
+        }
+
+        content = result.joined(separator: "\n")
+        try? content.write(to: url, atomically: true, encoding: .utf8)
+    }
+
+    private func searchEngineURL(engine: String, query: String) -> (name: String, url: String) {
+        switch engine.lowercased() {
+        case "duckduckgo", "ddg":
+            return ("DuckDuckGo", "https://duckduckgo.com/?q=\(query)")
+        case "bing":
+            return ("Bing", "https://www.bing.com/search?q=\(query)")
+        default:
+            return ("Google", "https://www.google.com/search?q=\(query)")
         }
     }
 }

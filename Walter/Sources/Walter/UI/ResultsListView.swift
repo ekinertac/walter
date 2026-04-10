@@ -14,6 +14,9 @@ class ResultsListView: NSView {
     private var results: [SearchResult] = []
     private let config: ConfigManager
 
+    /// Called when a row is clicked. The Int is the row index.
+    var onRowClicked: ((Int) -> Void)?
+
     var resultCount: Int { results.count }
 
     init(config: ConfigManager) {
@@ -62,6 +65,13 @@ class ResultsListView: NSView {
         scrollToRow(at: selectedIndex)
     }
 
+    /// Live-update colors on all rows (used during theme preview).
+    func updateColors(foreground: NSColor, accent: NSColor) {
+        for row in rowViews {
+            row.updateColors(foreground: foreground, accent: accent)
+        }
+    }
+
     private func scrollToRow(at index: Int) {
         guard index >= 0, index < rowViews.count else { return }
         let row = rowViews[index]
@@ -92,8 +102,9 @@ class ResultsListView: NSView {
         // we lay out from y=0 downward.
         var yOffset = padding
 
-        for result in visibleResults {
+        for (index, result) in visibleResults.enumerated() {
             let row = ResultRowView(result: result, config: config)
+            row.onClick = { [weak self] in self?.onRowClicked?(index) }
             row.frame = NSRect(
                 x: sideInset,
                 y: yOffset,
@@ -127,6 +138,8 @@ class FlippedView: NSView {
 
 class ResultRowView: NSView {
 
+    var onClick: (() -> Void)?
+
     private let iconView = NSImageView()
     private let titleLabel = NSTextField(labelWithString: "")
     private let subtitleLabel = NSTextField(labelWithString: "")
@@ -145,11 +158,11 @@ class ResultRowView: NSView {
         iconView.imageScaling = .scaleProportionallyUpOrDown
         iconView.translatesAutoresizingMaskIntoConstraints = false
 
-        titleLabel.font = .systemFont(ofSize: config.s(15), weight: .medium)
+        titleLabel.font = LauncherPanelController.resolveFont(name: config.theme.font, size: config.s(15), weight: .medium)
         titleLabel.textColor = .labelColor
         titleLabel.lineBreakMode = .byTruncatingTail
 
-        subtitleLabel.font = .systemFont(ofSize: config.s(12), weight: .regular)
+        subtitleLabel.font = LauncherPanelController.resolveFont(name: config.theme.font, size: config.s(12), weight: .regular)
         subtitleLabel.textColor = .secondaryLabelColor
         subtitleLabel.lineBreakMode = .byTruncatingMiddle
 
@@ -181,12 +194,20 @@ class ResultRowView: NSView {
 
     required init?(coder: NSCoder) { fatalError() }
 
+    private var accentColor: NSColor = .controlAccentColor
+
     func setSelected(_ selected: Bool) {
         if selected {
-            layer?.backgroundColor = NSColor.controlAccentColor.withAlphaComponent(0.2).cgColor
+            layer?.backgroundColor = accentColor.withAlphaComponent(0.2).cgColor
         } else {
             layer?.backgroundColor = nil
         }
+    }
+
+    func updateColors(foreground: NSColor, accent: NSColor) {
+        titleLabel.textColor = foreground
+        subtitleLabel.textColor = foreground.withAlphaComponent(0.6)
+        accentColor = accent
     }
 
     override func updateTrackingAreas() {
@@ -197,6 +218,10 @@ class ResultRowView: NSView {
             options: [.mouseEnteredAndExited, .activeAlways, .inVisibleRect],
             owner: self
         ))
+    }
+
+    override func mouseDown(with event: NSEvent) {
+        onClick?()
     }
 
     override func mouseEntered(with event: NSEvent) {
