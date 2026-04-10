@@ -18,6 +18,12 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     private var config: ConfigManager!
 
     func applicationDidFinishLaunching(_ notification: Notification) {
+        // Set the app icon (used in About dialog, Cmd+Tab if ever shown, etc.)
+        if let iconURL = Bundle.module.url(forResource: "AppIcon", withExtension: "icns"),
+           let icon = NSImage(contentsOf: iconURL) {
+            NSApp.applicationIconImage = icon
+        }
+
         // Load config (falls back to defaults if file is missing)
         config = ConfigManager()
 

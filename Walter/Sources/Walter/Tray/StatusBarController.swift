@@ -17,9 +17,13 @@ class StatusBarController {
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.squareLength)
 
         if let button = statusItem.button {
-            if let image = NSImage(systemSymbolName: "command", accessibilityDescription: "Walter") {
-                image.isTemplate = true
-                button.image = image
+            // Load the dedicated menu bar icon (black on transparent).
+            // isTemplate = true tells macOS to invert it in dark mode.
+            if let iconURL = Bundle.module.url(forResource: "menubar_icon", withExtension: "png"),
+               let icon = NSImage(contentsOf: iconURL) {
+                icon.size = NSSize(width: 18, height: 18)
+                icon.isTemplate = true
+                button.image = icon
             } else {
                 button.title = "W"
             }
@@ -76,6 +80,10 @@ class StatusBarController {
         let lightThemes = ["catppuccin-latte", "solarized-light", "github-light",
                            "rose-pine-dawn", "ayu-light", "everforest-light"]
 
+        // System default
+        addThemeItem(to: menu, name: "spotlight", currentTheme: currentTheme, displayOverride: "Spotlight (Default)")
+        menu.addItem(.separator())
+
         // Dark section
         let darkHeader = NSMenuItem(title: "Dark", action: nil, keyEquivalent: "")
         darkHeader.isEnabled = false
@@ -109,10 +117,10 @@ class StatusBarController {
         return menu
     }
 
-    private func addThemeItem(to menu: NSMenu, name: String, currentTheme: String?) {
+    private func addThemeItem(to menu: NSMenu, name: String, currentTheme: String?, displayOverride: String? = nil) {
         guard let preset = builtinThemes[name] else { return }
 
-        let displayName = name.split(separator: "-").map { $0.prefix(1).uppercased() + $0.dropFirst() }.joined(separator: " ")
+        let displayName = displayOverride ?? name.split(separator: "-").map { $0.prefix(1).uppercased() + $0.dropFirst() }.joined(separator: " ")
         let item = NSMenuItem(title: displayName, action: #selector(themeSelected(_:)), keyEquivalent: "")
         item.target = self
         item.representedObject = name
