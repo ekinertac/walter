@@ -55,21 +55,24 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         // property individually — the panel is cheap to construct.
         config.onChange = { [weak self] in
             guard let self else { return }
-            // Skip rebuild when the panel itself is writing to config (theme preview)
+
+            // Always rebind hotkey — even during theme preview the user
+            // might have changed keybindings in another editor window.
+            let (kc, mods) = HotkeyManager.parseBinding(self.config.keybindings.open)
+            self.hotkey = HotkeyManager(keyCode: kc, modifiers: mods) { [weak self] in
+                self?.panel.toggle()
+            }
+
+            // Skip panel rebuild during theme preview (the panel updates
+            // colors directly via previewTheme).
             if self.panel.suppressConfigRebuild { return }
+
             let wasVisible = self.panel.isVisible
             self.panel.hide()
             self.panel = LauncherPanelController(config: self.config)
             if wasVisible {
                 self.panel.show()
             }
-
-            // Re-create hotkey in case the binding changed
-            let (kc, mods) = HotkeyManager.parseBinding(self.config.keybindings.open)
-            self.hotkey = HotkeyManager(keyCode: kc, modifiers: mods) { [weak self] in
-                self?.panel.toggle()
-            }
-
             print("UI rebuilt with new config")
         }
 

@@ -59,6 +59,10 @@ class StatusBarController {
 
         menu.addItem(.separator())
 
+        let aboutItem = NSMenuItem(title: "About Walter", action: #selector(aboutClicked), keyEquivalent: "")
+        aboutItem.target = self
+        menu.addItem(aboutItem)
+
         let quitItem = NSMenuItem(title: "Quit Walter", action: #selector(quitClicked), keyEquivalent: "q")
         quitItem.target = self
         menu.addItem(quitItem)
@@ -157,7 +161,7 @@ class StatusBarController {
 
     @objc private func themeSelected(_ sender: NSMenuItem) {
         guard let themeName = sender.representedObject as? String,
-              let config = config else { return }
+              config != nil else { return }
 
         // Write the theme name into config.toml — hot-reload picks it up.
         updateConfigFile(key: "name", value: "\"\(themeName)\"", section: "theme")
@@ -176,6 +180,21 @@ class StatusBarController {
             LoginItemManager.enableLoginItem()
             loginItem.state = .on
         }
+    }
+
+    @objc private func aboutClicked() {
+        let alert = NSAlert()
+        alert.messageText = "Walter"
+        alert.informativeText = "Version 1.0.0\n\nA fast, native macOS launcher.\nhttps://github.com/ekinertac/walter"
+        alert.alertStyle = .informational
+
+        if let iconURL = Bundle.module.url(forResource: "AppIcon", withExtension: "icns"),
+           let icon = NSImage(contentsOf: iconURL) {
+            alert.icon = icon
+        }
+
+        NSApp.activate(ignoringOtherApps: true)
+        alert.runModal()
     }
 
     @objc private func quitClicked() {

@@ -1,6 +1,6 @@
 # Swift
 .build/
-dist/
+dist/build/
 .swiftpm/
 Package.resolved
 *.xcodeproj
@@ -14,3 +14,4 @@ Cargo.lock
 # macOS
 .DS_Store
 *.dSYM
+core/target/

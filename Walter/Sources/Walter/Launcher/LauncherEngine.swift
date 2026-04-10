@@ -50,18 +50,8 @@ class LauncherEngine {
 
         var results: [SearchResult] = []
 
-        // 1. Calculator
-        if let calc = calculator.evaluate(query: q) {
-            let icon = NSImage(systemSymbolName: "equal.circle", accessibilityDescription: "Calculator")
-            results.append(SearchResult(
-                title: calc.answer,
-                subtitle: "\(calc.expression) — Enter to copy",
-                icon: icon,
-                action: .copy(calc.answer)
-            ))
-        }
-
-        // 2. Currency / unit conversion
+        // 1. Currency / unit conversion (checked first — "100 km in miles"
+        //    should not trigger the calculator)
         let conversions = converter.convert(query: q)
         if !conversions.isEmpty {
             let icon = NSImage(systemSymbolName: "arrow.left.arrow.right", accessibilityDescription: "Convert")
@@ -73,6 +63,18 @@ class LauncherEngine {
                     action: .copy(conv.copyValue)
                 )
             }
+        }
+
+        // 2. Calculator (skip if converter already matched — avoids
+        //    "1920x1080" showing both a conversion and a multiplication)
+        if conversions.isEmpty, let calc = calculator.evaluate(query: q) {
+            let icon = NSImage(systemSymbolName: "equal.circle", accessibilityDescription: "Calculator")
+            results.append(SearchResult(
+                title: calc.answer,
+                subtitle: "\(calc.expression) — Enter to copy",
+                icon: icon,
+                action: .copy(calc.answer)
+            ))
         }
 
         // 3. Aliases from config
