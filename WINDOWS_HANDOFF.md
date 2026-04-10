@@ -10,7 +10,7 @@ The macOS source lives in `Walter/Sources/Walter/` (Swift + AppKit, ~3,000 lines
 
 | Layer | macOS (current) | Windows (recommended) |
 |---|---|---|
-| Language | Swift | C# (.NET 8) or Rust |
+| Language | Swift | C# (.NET 8) |
 | UI framework | AppKit (NSPanel) | WPF or WinUI 3 |
 | Window style | Borderless NSPanel + NSVisualEffectView | Borderless Window + AcrylicBrush / Mica |
 | Global hotkey | CGEventTap (suppresses key) | `RegisterHotKey` Win32 API |
@@ -19,7 +19,9 @@ The macOS source lives in `Walter/Sources/Walter/` (Swift + AppKit, ~3,000 lines
 | Config | TOML parser (hand-rolled) | Same TOML format, same file location logic |
 | Launch at login | SMAppService | Registry `HKCU\Software\Microsoft\Windows\CurrentVersion\Run` |
 
-**My recommendation: C# + WPF** — it's the Windows equivalent of Swift + AppKit. Native, fast, full control over window chrome, and WPF's `AcrylicBrush` gives the frosted glass effect. Rust + egui or iced would work but you'll hit the same platform integration pain we had on macOS.
+**Recommendation: C# + WPF.** It's the Windows equivalent of Swift + AppKit. Native, fast, full control over window chrome, and WPF's `AcrylicBrush` gives the frosted glass effect.
+
+No shared Rust core — each platform implements its own logic in the native language. The shared logic (fuzzy match, calculator, converter, config parser) is ~500 lines and well-tested. Use the shared test vectors in `Walter/Tests/` as the source of truth to keep implementations in sync.
 
 ---
 
@@ -432,24 +434,36 @@ WalterWin/
 
 ---
 
-## What Can Be Shared Across Platforms
+## Keeping Implementations in Sync
 
-These components are pure logic with zero platform dependencies — the algorithm and data structures are identical:
+No shared Rust core — each platform is native (Swift on macOS, C# on Windows). The shared logic is small enough (~500 lines) that maintaining it in two languages is simpler than FFI.
 
-1. **FuzzyMatch** — scoring algorithm, boundary detection
-2. **FrecencyTracker** — score formula, JSON format
-3. **Calculator** — expression detection, number formatting
-4. **Converter** — currency/unit parsing, conversion factors, API URL
-5. **Themes** — all 21 preset hex values
-6. **ConfigManager** — TOML parser logic (sections, key=value, inline comments)
-7. **Config schema** — identical TOML format on both platforms
+**Re-implement in C# (use the Swift source as reference):**
 
-These require platform-specific implementations:
+1. **FuzzyMatch** — scoring algorithm, boundary detection (~100 lines)
+2. **FrecencyTracker** — score formula, JSON format (~70 lines)
+3. **Calculator** — expression evaluation, number formatting (~110 lines)
+4. **Converter** — currency/unit parsing, conversion factors (~360 lines)
+5. **Themes** — all 21 preset hex values (~65 lines)
+6. **ConfigManager** — TOML parser (sections, key=value, inline comments) (~280 lines)
 
-1. **AppIndex** — different directories, file types (.app vs .lnk/.exe), watcher API
-2. **HotkeyManager** — CGEventTap vs RegisterHotKey
-3. **SystemCommands** — completely different commands
-4. **UI** — NSPanel/AppKit vs WPF/WinUI
-5. **Tray** — NSStatusItem vs NotifyIcon
-6. **LoginItem** — SMAppService vs Registry
-7. **Editor detection** — different default paths
+**Use test vectors to prevent drift.** The macOS test suite (`Walter/Tests/WalterTests/`) has 37 tests covering exact inputs and expected outputs. Port these tests to C# — if both platforms pass the same test cases, the logic is equivalent. Key test cases:
+
+- `fuzzyMatch("vsc", "Visual Studio Code")` → matched, score > 100
+- `fuzzyMatch("ff", "Firefox")` scores higher than `fuzzyMatch("ff", "Staff")`
+- `evaluate("128*3+15")` → answer "399"
+- `evaluate("(10+5)*3")` → answer "45"
+- `convert("10 km in miles")` → contains "mi"
+- `convert("100 c in f")` → contains "212"
+- Config with `name = "dracula"` → background "#282a36"
+- Config inline comment `scale = 3.0 # big!` → scale 3.0
+
+**Platform-specific (implement from scratch):**
+
+1. **AppIndex** — Start Menu scanning, `.lnk` parsing, `FileSystemWatcher`
+2. **HotkeyManager** — `RegisterHotKey` Win32 API (much simpler than macOS)
+3. **SystemCommands** — `rundll32`, `shutdown.exe`, registry for dark mode
+4. **UI** — WPF borderless window, AcrylicBrush/Mica, XAML layout
+5. **Tray** — `NotifyIcon` with context menu
+6. **LoginItem** — Registry `HKCU\...\Run`
+7. **Editor** — defaults to `notepad.exe`
