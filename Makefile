@@ -33,6 +33,10 @@ run: build
 release:
 	cd $(BUILD_DIR) && $(SWIFT) build -c release
 
+.PHONY: test
+test:
+	cd $(BUILD_DIR) && $(SWIFT) test
+
 # ---------------------------------------------------------------------------
 # Distribution (sign + notarize + DMG)
 # ---------------------------------------------------------------------------

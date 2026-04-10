@@ -14,5 +14,10 @@ let package = Package(
                 .copy("Resources/menubar_icon@2x.png"),
             ]
         ),
+        .testTarget(
+            name: "WalterTests",
+            dependencies: ["Walter"],
+            path: "Tests/WalterTests"
+        ),
     ]
 )
