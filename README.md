@@ -1,6 +1,10 @@
-# Walter
+<p align="center">
+  <img src="walter-icon.png" width="128" height="128" alt="Walter icon">
+</p>
 
-A fast, native macOS launcher with a highly customisable UI.
+<h1 align="center">Walter</h1>
+
+<p align="center">A fast, native macOS launcher with a highly customisable UI.</p>
 
 Built with Swift + AppKit. No Electron, no WebView, no Rust+Iced compromises — just native macOS APIs that work.
 
