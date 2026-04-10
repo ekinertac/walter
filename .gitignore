@@ -1,0 +1,15 @@
+# Swift
+.build/
+.swiftpm/
+Package.resolved
+*.xcodeproj
+xcuserdata/
+DerivedData/
+
+# Rust (legacy, can remove later)
+/target
+Cargo.lock
+
+# macOS
+.DS_Store
+*.dSYM
