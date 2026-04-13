@@ -6,6 +6,7 @@
 #   make run         → build and launch
 #   make dist        → build + sign + notarize + DMG
 #   make dist-quick  → build + sign + DMG (skip notarization)
+#   make reinstall   → quit running Walter, remove /Applications/Walter.app, install latest build
 #   make clean       → remove build artefacts
 #   make install     → copy release binary to ~/.local/bin
 
@@ -83,6 +84,30 @@ uninstall:
 	@echo "Removed $(PREFIX)/$(BINARY)"
 
 # ---------------------------------------------------------------------------
+# Reinstall (quit → uninstall → build → install to /Applications)
+# ---------------------------------------------------------------------------
+
+APP_BUNDLE := /Applications/Walter.app
+BUILT_APP  := dist/build/Walter.app
+
+.PHONY: reinstall
+reinstall:
+	@# Quit any running instance gracefully before replacing the bundle
+	@echo "→ Quitting Walter..."
+	@osascript -e 'tell application "Walter" to quit' 2>/dev/null || true
+	@sleep 1
+	@pkill -x Walter 2>/dev/null || true
+	@echo "→ Removing $(APP_BUNDLE)..."
+	@rm -rf $(APP_BUNDLE)
+	@echo "→ Building latest release..."
+	@./dist/build-release.sh --skip-notarize
+	@echo "→ Installing to /Applications..."
+	@cp -R $(BUILT_APP) /Applications/
+	@echo "→ Launching Walter..."
+	@open /Applications/Walter.app
+	@echo "Done — Walter reinstalled and running."
+
+# ---------------------------------------------------------------------------
 # Housekeeping
 # ---------------------------------------------------------------------------
 
@@ -100,6 +125,7 @@ help:
 	@echo "  release       Optimised release build"
 	@echo "  dist          Build + sign + notarize + DMG (full release)"
 	@echo "  dist-quick    Build + sign + DMG (skip notarization, for testing)"
+	@echo "  reinstall     Quit Walter, remove /Applications/Walter.app, build + reinstall"
 	@echo "  init-config   Copy example config to ~/.config/walter/"
 	@echo "  install       Release build + install to PREFIX ($(PREFIX))"
 	@echo "  uninstall     Remove installed binary"

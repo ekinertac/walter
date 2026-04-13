@@ -386,8 +386,10 @@ class LauncherPanelController: NSObject {
             return
 
         default:
-            launcher.launch(result: result)
+            // Hide first so the panel disappears instantly on selection,
+            // then launch async so NSWorkspace.open() doesn't stall the UI.
             hide()
+            DispatchQueue.main.async { self.launcher.launch(result: result) }
         }
     }
 }
