@@ -49,6 +49,14 @@ class ConfigManager {
     var general = General()
     var search = Search()
     var aliases: [String: String] = [:]
+    var userThemes: [String: ThemePreset] = [:]   // loaded from ~/.config/walter/themes/*.theme
+
+    /// Built-in + user themes, with user winning on name collision.
+    var allThemes: [String: ThemePreset] {
+        var merged = builtinThemes
+        for (k, v) in userThemes { merged[k] = v }
+        return merged
+    }
 
     var onChange: (() -> Void)?
     private var fileMonitor: DispatchSourceFileSystemObject?
@@ -59,6 +67,7 @@ class ConfigManager {
 
     init() {
         ensureConfigExists()
+        ensureUserThemesDirExists()
         load()
         startWatching()
     }
@@ -73,6 +82,11 @@ class ConfigManager {
             .appendingPathComponent(".config/walter/config.toml")
     }
 
+    /// Directory containing user-defined `*.theme` files.
+    var userThemesDir: URL {
+        configURL.deletingLastPathComponent().appendingPathComponent("themes")
+    }
+
     func reload() {
         theme = Theme()
         layout = Layout()
@@ -80,6 +94,7 @@ class ConfigManager {
         general = General()
         search = Search()
         aliases = [:]
+        userThemes = [:]
         load()
         print("Config hot-reloaded")
         DispatchQueue.main.async { [weak self] in self?.onChange?() }
@@ -153,9 +168,42 @@ show_path            = true        # show file path in result subtitle
         print("Created default config at \(url.path)")
     }
 
+    /// Creates ~/.config/walter/themes/ on first run and seeds it with a
+    /// commented example file so users have something to copy from.
+    private func ensureUserThemesDirExists() {
+        let dir = userThemesDir
+        let fm = FileManager.default
+        try? fm.createDirectory(at: dir, withIntermediateDirectories: true)
+
+        let example = dir.appendingPathComponent("example.theme")
+        guard !fm.fileExists(atPath: example.path) else { return }
+
+        let body = """
+        # example.theme — sample custom theme for Walter
+        #
+        # Drop more *.theme files in this directory to add themes.
+        # The filename (without extension) is the theme's name; reference
+        # it from config.toml with `name = "example"` under [theme].
+        #
+        # Each theme needs three keys: background, foreground, accent.
+        # Values are CSS-style hex colors. Aliases `bg` / `fg` also work.
+        # Lines starting with `#` are comments.
+
+        background  #1a1a2e
+        foreground  #eaeaea
+        accent      #ff6b6b
+        """
+        try? body.write(to: example, atomically: true, encoding: .utf8)
+        print("Seeded user themes dir at \(dir.path)")
+    }
+
     // MARK: - TOML parser
 
     private func load() {
+        // Pick up any user-defined themes before parsing config so that
+        // `name = "..."` lookups resolve against the merged map.
+        userThemes = loadUserThemes(from: userThemesDir)
+
         guard FileManager.default.fileExists(atPath: configURL.path),
               let content = try? String(contentsOf: configURL, encoding: .utf8) else {
             print("Config not found or unreadable, using defaults")
@@ -226,9 +274,10 @@ show_path            = true        # show file path in result subtitle
             }
         }
 
-        // Apply built-in theme preset (overrides individual colors)
+        // Apply theme preset by name — built-in or user-defined under
+        // ~/.config/walter/themes/. Individual colors below it are ignored.
         if let themeName = theme.name?.lowercased(),
-           let preset = builtinThemes[themeName] {
+           let preset = allThemes[themeName] {
             theme.background = preset.background
             theme.foreground = preset.foreground
             theme.accent = preset.accent

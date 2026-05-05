@@ -213,13 +213,15 @@ class LauncherEngine {
         }
     }
 
-    /// Returns all built-in themes as results, filtered by query.
-    /// Used when the UI is in theme-picker mode.
+    /// Returns themes (built-in + user-defined) as picker results,
+    /// filtered by query. Used when the UI is in theme-picker mode.
+    /// Built-ins keep their curated order; user themes follow alphabetically
+    /// under a "Custom" group label.
     func themeResults(filter: String) -> [SearchResult] {
         let currentTheme = config?.theme.name?.lowercased()
         let icon = NSImage(systemSymbolName: "paintpalette", accessibilityDescription: "Theme")
 
-        let allThemes: [(name: String, group: String)] =
+        let builtins: [(name: String, group: String)] =
             [("spotlight", "System"),
              ("catppuccin-mocha", "Dark"), ("catppuccin-macchiato", "Dark"),
              ("catppuccin-frappe", "Dark"), ("catppuccin-latte", "Light"),
@@ -230,9 +232,20 @@ class LauncherEngine {
              ("everforest", "Dark"), ("everforest-light", "Light"),
              ("ayu-dark", "Dark"), ("ayu-light", "Light"), ("github-light", "Light")]
 
+        let userNames = (config?.userThemes.keys ?? Dictionary<String, ThemePreset>().keys)
+            .sorted()
+
+        // Built-ins first, then user themes (excluding any name collisions
+        // that would already be displayed under a built-in slot).
+        let builtinNames = Set(builtins.map { $0.name })
+        let combined: [(name: String, group: String)] =
+            builtins + userNames
+                .filter { !builtinNames.contains($0) }
+                .map { ($0, "Custom") }
+
         let q = filter.trimmingCharacters(in: .whitespaces)
 
-        return allThemes.compactMap { theme in
+        return combined.compactMap { theme in
             if !q.isEmpty {
                 let match = fuzzyMatch(query: q, target: theme.name)
                 guard match.matched else { return nil }
