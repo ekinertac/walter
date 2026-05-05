@@ -204,13 +204,20 @@ class LauncherPanelController: NSObject {
 
     private static let posXKey = "walter.panel.x"
     private static let posTopYKey = "walter.panel.topY"
+    private static let posScaleKey = "walter.panel.scale"
 
     private func restoreOrCenterPosition() {
         let defaults = UserDefaults.standard
         if defaults.object(forKey: Self.posXKey) != nil {
             let x = CGFloat(defaults.double(forKey: Self.posXKey))
             let topY = CGFloat(defaults.double(forKey: Self.posTopYKey))
-            let y = topY - panel.frame.height
+            let savedScale = CGFloat(defaults.double(forKey: Self.posScaleKey))
+            let currentScale = CGFloat(config.layout.scale)
+
+            // Adjust topY for scale change so the window stays visually fixed
+            let adjustedTopY = topY + (savedScale - currentScale) * baseWindowHeight * 0.5
+
+            let y = adjustedTopY - panel.frame.height
             let origin = NSPoint(x: x, y: y)
             if isOnScreen(origin: origin) {
                 panel.setFrameOrigin(origin)
@@ -218,6 +225,11 @@ class LauncherPanelController: NSObject {
             }
         }
         centerOnScreen()
+    }
+
+    private var baseWindowHeight: CGFloat {
+        // Input field height without results
+        return CGFloat(72)
     }
 
     private func centerOnScreen() {
@@ -237,6 +249,7 @@ class LauncherPanelController: NSObject {
         let frame = panel.frame
         UserDefaults.standard.set(Double(frame.origin.x), forKey: Self.posXKey)
         UserDefaults.standard.set(Double(frame.origin.y + frame.height), forKey: Self.posTopYKey)
+        UserDefaults.standard.set(Double(config.layout.scale), forKey: Self.posScaleKey)
     }
 
     // MARK: - State
