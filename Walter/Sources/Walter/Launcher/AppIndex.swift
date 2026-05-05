@@ -96,6 +96,15 @@ class AppIndex {
         return combined.filter { FileManager.default.fileExists(atPath: $0) }
     }
 
+    /// Bundle IDs of /System/Library/CoreServices apps that LaunchServices
+    /// reports as launchable but are really internal helpers, agents, or
+    /// tutorial overlays. They have no business in a launcher.
+    /// Add to this list when new offenders are discovered — the user's
+    /// `excluded_apps` config is the override path for personal taste.
+    private static let internalBundleIDs: Set<String> = [
+        "com.apple.AVB-Audio-Configuration",
+    ]
+
     private func rebuildIndex() {
         var seen = Set<String>()
         var newEntries: [AppEntry] = []
@@ -108,6 +117,8 @@ class AppIndex {
                 let path = url.path
                 guard !seen.contains(path) else { continue }
                 seen.insert(path)
+
+                if Self.isInternalAgent(at: url) { continue }
 
                 let name = appDisplayName(at: url)
                 let icon = NSWorkspace.shared.icon(forFile: path)
@@ -149,6 +160,36 @@ class AppIndex {
         }
 
         return apps
+    }
+
+    /// Returns true if the bundle is an internal helper that should not
+    /// appear in launcher results. Heuristics:
+    ///   1. No CFBundleIconFile declared in Info.plist (most agents).
+    ///   2. CFBundleIconFile names a file that doesn't exist on disk
+    ///      (rare, but a strong signal it isn't user-facing).
+    ///   3. Bundle ID is in the hardcoded internal list (AVB and friends
+    ///      that *do* ship icons but exist only for niche subsystems).
+    private static func isInternalAgent(at url: URL) -> Bool {
+        guard let bundle = Bundle(url: url) else { return true }
+
+        if let bundleID = bundle.bundleIdentifier,
+           internalBundleIDs.contains(bundleID) {
+            return true
+        }
+
+        let info = bundle.infoDictionary ?? [:]
+        guard let iconRef = info["CFBundleIconFile"] as? String, !iconRef.isEmpty else {
+            return true
+        }
+
+        // CFBundleIconFile may or may not include the .icns extension.
+        let iconName = iconRef.hasSuffix(".icns") ? iconRef : iconRef + ".icns"
+        let iconPath = url.appendingPathComponent("Contents/Resources/\(iconName)").path
+        if !FileManager.default.fileExists(atPath: iconPath) {
+            return true
+        }
+
+        return false
     }
 
     /// Reads the display name from the bundle's Info.plist.
