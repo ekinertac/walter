@@ -105,6 +105,14 @@ class AppIndex {
         "com.apple.AVB-Audio-Configuration",
     ]
 
+    /// Bundle IDs to keep even when the icon-presence heuristic would
+    /// reject them. System Settings on macOS 13+ ships without a
+    /// CFBundleIconFile in its Info.plist (the icon comes from
+    /// AssetCatalog), so it would otherwise be filtered out.
+    private static let alwaysIncludeBundleIDs: Set<String> = [
+        "com.apple.systempreferences",
+    ]
+
     private func rebuildIndex() {
         var seen = Set<String>()
         var newEntries: [AppEntry] = []
@@ -172,8 +180,12 @@ class AppIndex {
     private static func isInternalAgent(at url: URL) -> Bool {
         guard let bundle = Bundle(url: url) else { return true }
 
-        if let bundleID = bundle.bundleIdentifier,
-           internalBundleIDs.contains(bundleID) {
+        let bundleID = bundle.bundleIdentifier
+        if let id = bundleID, alwaysIncludeBundleIDs.contains(id) {
+            return false
+        }
+
+        if let id = bundleID, internalBundleIDs.contains(id) {
             return true
         }
 
