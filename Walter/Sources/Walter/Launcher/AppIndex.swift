@@ -106,11 +106,66 @@ class AppIndex {
     ]
 
     /// Bundle IDs to keep even when the icon-presence heuristic would
-    /// reject them. System Settings on macOS 13+ ships without a
-    /// CFBundleIconFile in its Info.plist (the icon comes from
-    /// AssetCatalog), so it would otherwise be filtered out.
+    /// reject them. Many first-party macOS apps (especially on macOS 13+)
+    /// declare their icon via AssetCatalog rather than CFBundleIconFile,
+    /// which would otherwise drop them from the index.
+    /// Whitelist over heuristic — false positives in this list cost less
+    /// than missing user-facing apps.
     private static let alwaysIncludeBundleIDs: Set<String> = [
-        "com.apple.systempreferences",
+        // System / configuration
+        "com.apple.systempreferences",      // System Settings
+        "com.apple.SystemProfiler",         // System Information
+        "com.apple.ActivityMonitor",
+        "com.apple.DiskUtility",
+        "com.apple.Console",
+        "com.apple.keychainaccess",         // Keychain Access
+        "com.apple.AirPortUtility",
+        "com.apple.audio.AudioMIDISetup",
+        "com.apple.bluetoothfileexchange",
+        "com.apple.bootcampassistant",
+        "com.apple.ColorSyncUtility",
+        "com.apple.DigitalColorMeter",
+        "com.apple.MigrationAssistant",
+        "com.apple.VoiceOverUtility",
+        "com.apple.screencaptureui",        // Screenshot
+        "com.apple.ScriptEditor2",
+        "com.apple.grapher",
+        "com.apple.Terminal",
+        // Productivity / built-ins commonly bundled without CFBundleIconFile
+        "com.apple.finder",                 // Finder (paranoia)
+        "com.apple.Safari",
+        "com.apple.mail",
+        "com.apple.AddressBook",            // Contacts
+        "com.apple.iCal",                   // Calendar
+        "com.apple.reminders",
+        "com.apple.Notes",
+        "com.apple.Maps",
+        "com.apple.FaceTime",
+        "com.apple.iChat",                  // Messages
+        "com.apple.shortcuts",
+        "com.apple.Stickies",
+        "com.apple.TextEdit",
+        "com.apple.Preview",
+        "com.apple.QuickTimePlayerX",
+        "com.apple.Music",
+        "com.apple.podcasts",
+        "com.apple.TV",
+        "com.apple.weather",
+        "com.apple.Stocks",
+        "com.apple.Home",
+        "com.apple.iWork.Pages",
+        "com.apple.iWork.Numbers",
+        "com.apple.iWork.Keynote",
+        "com.apple.dt.Xcode",
+        "com.apple.FontBook",
+        "com.apple.calculator",
+        "com.apple.Image_Capture",
+        "com.apple.PhotoBooth",
+        "com.apple.dictionary",
+        "com.apple.AppStore",
+        "com.apple.iBooksX",                // Books
+        "com.apple.Photos",
+        "com.apple.findmy",
     ]
 
     private func rebuildIndex() {
