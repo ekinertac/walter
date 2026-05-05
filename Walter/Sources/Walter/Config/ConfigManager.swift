@@ -60,6 +60,7 @@ class ConfigManager {
 
     var onChange: (() -> Void)?
     private var fileMonitor: DispatchSourceFileSystemObject?
+    private var themesMonitor: DispatchSourceFileSystemObject?
 
     func s(_ base: CGFloat) -> CGFloat {
         base * CGFloat(layout.scale)
@@ -70,9 +71,13 @@ class ConfigManager {
         ensureUserThemesDirExists()
         load()
         startWatching()
+        startWatchingThemes()
     }
 
-    deinit { stopWatching() }
+    deinit {
+        stopWatching()
+        stopWatchingThemes()
+    }
 
     var configURL: URL {
         if let env = ProcessInfo.processInfo.environment["WALTER_CONFIG"] {
@@ -328,5 +333,47 @@ show_path            = true        # show file path in result subtitle
     private func stopWatching() {
         fileMonitor?.cancel()
         fileMonitor = nil
+    }
+
+    // MARK: - Themes directory watcher
+    //
+    // Watches ~/.config/walter/themes/ so that adding, editing, or removing
+    // a *.theme file triggers a reload without the user also having to
+    // touch config.toml. Uses the same DispatchSource fd-watcher pattern as
+    // the config-file monitor; the fd is on the directory itself, and
+    // .write fires whenever its contents change.
+
+    private func startWatchingThemes() {
+        stopWatchingThemes()
+
+        let path = userThemesDir.path
+        let fd = open(path, O_EVTONLY)
+        guard fd >= 0 else {
+            print("ConfigManager: can't watch \(path)")
+            return
+        }
+
+        let source = DispatchSource.makeFileSystemObjectSource(
+            fileDescriptor: fd,
+            eventMask: [.write, .rename, .delete, .attrib],
+            queue: .main
+        )
+        source.setEventHandler { [weak self] in
+            guard let self else { return }
+            self.stopWatchingThemes()
+            // Debounce — editors often emit multiple events per save.
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
+                self.reload()
+                self.startWatchingThemes()
+            }
+        }
+        source.setCancelHandler { close(fd) }
+        source.resume()
+        themesMonitor = source
+    }
+
+    private func stopWatchingThemes() {
+        themesMonitor?.cancel()
+        themesMonitor = nil
     }
 }
