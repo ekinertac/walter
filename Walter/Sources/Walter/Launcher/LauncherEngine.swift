@@ -5,8 +5,9 @@
 //   2. Currency / unit conversion (if query matches pattern)
 //   3. Aliases (exact prefix match from [aliases] config)
 //   4. System commands (lock, sleep, restart, etc.)
-//   5. Apps (fuzzy matched, frecency-boosted)
-//   6. Web search fallback (always last)
+//   5. System Settings panes (Bluetooth, Display, ...)
+//   6. Apps (fuzzy matched, frecency-boosted)
+//   7. Web search fallback (always last)
 //
 // Called by: LauncherPanelController on every keystroke.
 
@@ -35,6 +36,7 @@ class LauncherEngine {
     private let frecency = FrecencyTracker()
     private let calculator = Calculator()
     private let converter = Converter()
+    private let prefPanes = PrefPaneIndex()
     private var systemCommands: SystemCommands!
     private weak var config: ConfigManager?
 
@@ -129,7 +131,21 @@ class LauncherEngine {
             }
         }
 
-        // 5. Apps (fuzzy + frecency)
+        // 5b. System Settings panes (Bluetooth, Display, Network, ...).
+        //     Surfaced before apps so "Bluetooth" matches the pane, not a
+        //     random app. Capped at top 4 to avoid drowning out apps.
+        let paneResults = prefPanes.search(query: q)
+        for item in paneResults.prefix(4) {
+            let icon = NSImage(systemSymbolName: item.pane.iconName, accessibilityDescription: item.pane.name)
+            results.append(SearchResult(
+                title: item.pane.name,
+                subtitle: "System Settings",
+                icon: icon,
+                action: .url(item.pane.url)
+            ))
+        }
+
+        // 6. Apps (fuzzy + frecency)
         let excluded = Set(config?.search.excludedApps.map { $0.lowercased() } ?? [])
         var scored: [(entry: AppEntry, score: Double)] = []
 
@@ -153,7 +169,7 @@ class LauncherEngine {
             )
         }
 
-        // 6. Web search fallback
+        // 7. Web search fallback
         let encoded = q.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? q
         let engine = config?.search.engine ?? "google"
         let (engineName, webURL) = searchEngineURL(engine: engine, query: encoded)
