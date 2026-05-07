@@ -169,7 +169,16 @@ class AppIndex {
     ]
 
     private func rebuildIndex() {
-        var seen = Set<String>()
+        // Two-key dedup: paths are deduped first (cheap, prevents reading
+        // the same bundle twice when it appears via overlapping scan dirs),
+        // then bundle IDs are deduped (catches the same logical app
+        // surfaced under different paths — e.g. /System/Applications/Tips.app
+        // vs /System/Library/CoreServices/Tips.app, or the duplicate
+        // Screenshot/Siri/Contacts bundles macOS ships).
+        // Scan-dir order is preserved, so /Applications wins over the
+        // /System/Library/CoreServices fallbacks.
+        var seenPaths = Set<String>()
+        var seenBundleIDs = Set<String>()
         var newEntries: [AppEntry] = []
 
         for dir in allDirs {
@@ -178,12 +187,18 @@ class AppIndex {
 
             for url in apps {
                 let path = url.path
-                guard !seen.contains(path) else { continue }
-                seen.insert(path)
+                guard !seenPaths.contains(path) else { continue }
+                seenPaths.insert(path)
 
-                if Self.isInternalAgent(at: url) { continue }
+                guard let bundle = Bundle(url: url) else { continue }
+                if Self.isInternalAgent(bundle: bundle, at: url) { continue }
 
-                let name = appDisplayName(at: url)
+                if let bundleID = bundle.bundleIdentifier {
+                    guard !seenBundleIDs.contains(bundleID) else { continue }
+                    seenBundleIDs.insert(bundleID)
+                }
+
+                let name = appDisplayName(bundle: bundle, fallback: url)
                 let icon = NSWorkspace.shared.icon(forFile: path)
                 icon.size = NSSize(width: 64, height: 64)
 
@@ -240,9 +255,7 @@ class AppIndex {
     ///      (rare, but a strong signal it isn't user-facing).
     ///   3. Bundle ID is in the hardcoded internal list (AVB and friends
     ///      that *do* ship icons but exist only for niche subsystems).
-    private static func isInternalAgent(at url: URL) -> Bool {
-        guard let bundle = Bundle(url: url) else { return true }
-
+    private static func isInternalAgent(bundle: Bundle, at url: URL) -> Bool {
         let bundleID = bundle.bundleIdentifier
         if let id = bundleID, alwaysIncludeBundleIDs.contains(id) {
             return false
@@ -267,22 +280,19 @@ class AppIndex {
         return false
     }
 
-    /// Reads the display name from the bundle's Info.plist.
+    /// Reads the display name from a pre-loaded bundle.
     /// Falls back to the filename without .app extension.
-    private func appDisplayName(at url: URL) -> String {
-        if let bundle = Bundle(url: url) {
-            // CFBundleDisplayName is the user-facing name (localised)
-            if let displayName = bundle.object(forInfoDictionaryKey: "CFBundleDisplayName") as? String,
-               !displayName.isEmpty {
-                return displayName
-            }
-            // CFBundleName is the short bundle name
-            if let bundleName = bundle.object(forInfoDictionaryKey: "CFBundleName") as? String,
-               !bundleName.isEmpty {
-                return bundleName
-            }
+    private func appDisplayName(bundle: Bundle, fallback url: URL) -> String {
+        // CFBundleDisplayName is the user-facing name (localised)
+        if let displayName = bundle.object(forInfoDictionaryKey: "CFBundleDisplayName") as? String,
+           !displayName.isEmpty {
+            return displayName
         }
-        // Last resort: filename
+        // CFBundleName is the short bundle name
+        if let bundleName = bundle.object(forInfoDictionaryKey: "CFBundleName") as? String,
+           !bundleName.isEmpty {
+            return bundleName
+        }
         return url.deletingPathExtension().lastPathComponent
     }
 
