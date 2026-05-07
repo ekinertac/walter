@@ -202,12 +202,20 @@ class AppIndex {
     /// Finds .app bundles in a directory. When `recursive` is true, also
     /// scans subfolders (e.g. ~/Applications/Setapp/*.app) — but stops
     /// recursing into .app bundles themselves (they contain nested .app).
+    ///
+    /// We deliberately do NOT pass `.skipsHiddenFiles` here. macOS marks
+    /// the Cryptex-target symlinks under /Applications (Safari.app and a
+    /// handful of other system browsers) as hidden so they don't clutter
+    /// Finder, and that flag is honored by contentsOfDirectory. With the
+    /// option enabled, `Safari.app -> ../System/Cryptexes/...` is silently
+    /// dropped from the listing and never makes it into the index.
+    /// Filtering by `.app` extension is enough — dotfiles are uninteresting.
     private func findApps(in directory: URL, recursive: Bool) -> [URL] {
         let fm = FileManager.default
         guard let contents = try? fm.contentsOfDirectory(
             at: directory,
             includingPropertiesForKeys: [.isDirectoryKey],
-            options: [.skipsHiddenFiles]
+            options: []
         ) else { return [] }
 
         var apps: [URL] = []
