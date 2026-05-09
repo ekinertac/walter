@@ -3,10 +3,35 @@
 // Wraps rows in an NSScrollView so the list scrolls when the selection moves
 // beyond the visible area. The scroll view is borderless and transparent to
 // blend with the vibrancy background.
+//
+// Conforms to `ResultsView` so LauncherPanelController can swap this for the
+// grid renderer (`ResultsGridView`) at runtime based on `layout.mode`.
 
 import AppKit
 
-class ResultsListView: NSView {
+/// Surface area exposed to LauncherPanelController. Both the list and grid
+/// implementations conform so the controller doesn't care which is mounted.
+protocol ResultsView: NSView {
+    var onRowClicked: ((Int) -> Void)? { get set }
+    var resultCount: Int { get }
+    /// Pixel height the view needs to render the given results without
+    /// scrolling, capped at the caller-supplied `maxRows` worth of content.
+    /// Each renderer interprets `maxRows` against its own row metric:
+    /// list = literal rows, grid = tile rows (banners always show in full).
+    func contentHeight(for results: [SearchResult], maxRows: Int) -> CGFloat
+    func result(at index: Int) -> SearchResult?
+    func update(results: [SearchResult], selectedIndex: Int)
+    func update(selectedIndex: Int)
+    func updateColors(foreground: NSColor, accent: NSColor)
+    /// Move selection by a 1-D step (list: prev/next; grid: prev/next tile in
+    /// reading order). Returns the new selected index.
+    func step(by delta: Int, from current: Int) -> Int
+    /// Move selection by a 2-D step (grid only; list ignores horizontal).
+    /// dx/dy are in column / row units.
+    func step(dx: Int, dy: Int, from current: Int) -> Int
+}
+
+class ResultsListView: NSView, ResultsView {
 
     private let scrollView: NSScrollView
     private let documentView: NSView
@@ -50,6 +75,23 @@ class ResultsListView: NSView {
     func result(at index: Int) -> SearchResult? {
         guard index >= 0, index < results.count else { return nil }
         return results[index]
+    }
+
+    func contentHeight(for results: [SearchResult], maxRows: Int) -> CGFloat {
+        let visibleRows = min(results.count, maxRows)
+        guard visibleRows > 0 else { return 0 }
+        let rowStride = config.s(64)
+        return CGFloat(visibleRows) * rowStride + config.s(8)
+    }
+
+    func step(by delta: Int, from current: Int) -> Int {
+        guard !results.isEmpty else { return 0 }
+        return (current + delta + results.count) % results.count
+    }
+
+    func step(dx: Int, dy: Int, from current: Int) -> Int {
+        // List view is one column; only vertical motion matters.
+        step(by: dy, from: current)
     }
 
     func update(results: [SearchResult], selectedIndex: Int) {

@@ -24,6 +24,7 @@ class ConfigManager {
         var position: String = "center"
         var scale: Float = 1.0
         var placeholder: String = "Search apps, calculate, convert..."
+        var mode: String = "list"     // "list" (Alfred-style) | "grid" (Spotlight-Tahoe-style)
     }
 
     struct Keybindings {
@@ -140,6 +141,7 @@ max_results = 8                # max visible result rows
 position    = "center"         # center | top
 scale       = 1.0              # UI scale: 1.0 = default, 2.0 = double
 placeholder = "Search apps, calculate, convert..."
+mode        = "list"           # list | grid (grid = Spotlight-Tahoe icon tiles)
 
 [keybindings]
 # Modifiers: Alt/Option, Cmd/Command, Ctrl/Control, Shift
@@ -253,6 +255,7 @@ show_path            = true        # show file path in result subtitle
             case ("layout", "position"):     layout.position = value
             case ("layout", "scale"):        layout.scale = Float(value) ?? layout.scale
             case ("layout", "placeholder"):  layout.placeholder = value
+            case ("layout", "mode"):         layout.mode = value
             // Keybindings
             case ("keybindings", "open"):    keybindings.open = value
             case ("keybindings", "close"):   keybindings.close = value

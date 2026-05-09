@@ -14,7 +14,7 @@ class LauncherPanelController: NSObject {
     private let searchField: NSTextField
     private let searchIcon: NSImageView
     private let separator: NSBox
-    private let resultsView: ResultsListView
+    private let resultsView: any ResultsView
     private var launcher: LauncherEngine!
     private let config: ConfigManager
 
@@ -84,7 +84,14 @@ class LauncherPanelController: NSObject {
         separator.translatesAutoresizingMaskIntoConstraints = false
 
         // --- Results ---
-        resultsView = ResultsListView(config: config)
+        // Pick the renderer based on layout.mode. List is the default; the
+        // grid mode mirrors the macOS Tahoe Spotlight aesthetic with large
+        // icon tiles.
+        if config.layout.mode.lowercased() == "grid" {
+            resultsView = ResultsGridView(config: config)
+        } else {
+            resultsView = ResultsListView(config: config)
+        }
         resultsView.translatesAutoresizingMaskIntoConstraints = false
 
         super.init()
@@ -270,16 +277,14 @@ class LauncherPanelController: NSObject {
         }
         selectedIndex = 0
         resultsView.update(results: results, selectedIndex: selectedIndex)
-        resizePanelToFit(resultCount: results.count)
+        resizePanelToFit(resultCount: results.count, results: results)
         separator.isHidden = results.isEmpty
     }
 
-    private func resizePanelToFit(resultCount: Int) {
+    private func resizePanelToFit(resultCount: Int, results: [SearchResult]) {
         let inputHeight = config.s(72)
         let separatorHeight: CGFloat = resultCount > 0 ? config.s(18) : 0
-        let rowHeight = config.s(64)
-        let maxRows = min(resultCount, config.layout.maxResults)
-        let resultsHeight = CGFloat(maxRows) * rowHeight + (maxRows > 0 ? config.s(8) : 0)
+        let resultsHeight = resultsView.contentHeight(for: results, maxRows: config.layout.maxResults)
         let screenHeight = NSScreen.main?.visibleFrame.height ?? 900
         let maxHeight = screenHeight * 0.9
         let newHeight = min(inputHeight + separatorHeight + resultsHeight, maxHeight)
@@ -300,9 +305,22 @@ class LauncherPanelController: NSObject {
     private func moveSelection(by delta: Int) {
         let count = resultsView.resultCount
         guard count > 0 else { return }
-        selectedIndex = (selectedIndex + delta + count) % count
+        selectedIndex = resultsView.step(by: delta, from: selectedIndex)
         resultsView.update(selectedIndex: selectedIndex)
+        notifyPreviewIfNeeded()
+    }
 
+    /// Two-dimensional move (used by grid mode for left/right keys).
+    /// In list mode the grid view's `step(dx:dy:)` ignores horizontal motion.
+    private func moveSelection(dx: Int, dy: Int) {
+        let count = resultsView.resultCount
+        guard count > 0 else { return }
+        selectedIndex = resultsView.step(dx: dx, dy: dy, from: selectedIndex)
+        resultsView.update(selectedIndex: selectedIndex)
+        notifyPreviewIfNeeded()
+    }
+
+    private func notifyPreviewIfNeeded() {
         if isThemePicker, let result = resultsView.result(at: selectedIndex),
            case .applyTheme(let name) = result.action {
             previewTheme(name)
@@ -441,10 +459,20 @@ extension LauncherPanelController: NSTextFieldDelegate {
             moveSelection(by: -1); return true
         }
         if commandSelector == #selector(NSResponder.moveDown(_:)) {
-            moveSelection(by: 1); return true
+            moveSelection(dx: 0, dy: 1); return true
         }
         if commandSelector == #selector(NSResponder.moveUp(_:)) {
-            moveSelection(by: -1); return true
+            moveSelection(dx: 0, dy: -1); return true
+        }
+        // Only intercept horizontal arrows when in grid mode — otherwise
+        // they'd hijack text-cursor motion in the search field.
+        if resultsView is ResultsGridView {
+            if commandSelector == #selector(NSResponder.moveLeft(_:)) {
+                moveSelection(dx: -1, dy: 0); return true
+            }
+            if commandSelector == #selector(NSResponder.moveRight(_:)) {
+                moveSelection(dx: 1, dy: 0); return true
+            }
         }
         return false
     }
