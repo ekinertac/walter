@@ -33,7 +33,11 @@ class ConfigManager {
     }
 
     struct Search {
-        var engine: String = "google"
+        /// URL template (or named shorthand) used by the trailing
+        /// web-search fallback row. Named `webSearch` rather than
+        /// `engine` because the `[search]` section also configures
+        /// app indexing and file indexing — `engine` was ambiguous.
+        var webSearch: String = "google"
         var showSystemCommands: Bool = true
         var showPath: Bool = true
         var excludedApps: [String] = []
@@ -43,6 +47,19 @@ class ConfigManager {
         /// containing `{host}`. Defaults to Google's S2 service at 128px,
         /// which is by far the highest-resolution free option.
         var faviconService: String = "google"
+        /// Directories indexed for prefix-triggered file search (e.g. ``foo``).
+        /// Empty disables file search entirely. The defaults live in the
+        /// generated config file, NOT here — Walter must never start
+        /// indexing a user's disk unless they've consented by listing the
+        /// directories explicitly in `~/.config/walter/config.toml`. That
+        /// way upgrading the app on an existing install never silently
+        /// expands what Walter is allowed to read.
+        var fileDirs: [String] = []
+        /// Single character that activates file-search mode when typed at
+        /// the start of the query. Defaults to backtick because it's easy
+        /// to reach on US/UK layouts and isn't shadowed by anything else
+        /// in the launcher's input vocabulary.
+        var filePrefix: String = "`"
     }
 
     struct General {
@@ -198,12 +215,12 @@ close = "Escape"                     # close (also unfocuses to previous app)
 # Search
 # ---------------------------------------------------------------------------
 [search]
-# Web search engine for the trailing fallback row. Either a built-in
-# name (google | duckduckgo | bing) or a full URL template that contains
-# {query}, e.g.
-#   engine = "https://kagi.com/search?q={query}"
-#   engine = "https://html.duckduckgo.com/html/?q={query}"
-engine               = "google"
+# Web search for the trailing fallback row. Either a built-in name
+# (google | duckduckgo | bing) or a full URL template containing {query}:
+#   web_search = "https://kagi.com/search?q={query}"
+#   web_search = "https://html.duckduckgo.com/html/?q={query}"
+#   web_search = "https://you.com/search?q={query}"
+web_search           = "google"
 
 show_system_commands = true          # Lock Screen, Sleep, Restart, ...
 show_path            = true          # show file path in result subtitle
@@ -221,6 +238,15 @@ show_path            = true          # show file path in result subtitle
 
 # Extra directories to scan for .app bundles (comma-separated):
 # app_dirs           = /opt/myapps, ~/Tools
+
+# Directories indexed for prefix-triggered file search. Type `<prefix>foo`
+# to search filenames in these dirs only — outside of prefix mode the
+# file index is invisible so apps stay first-class. Set `file_dirs = `
+# (empty) to disable file search entirely.
+file_dirs            = ~/Documents, ~/Desktop, ~/Downloads
+# Single character that activates file-search mode (default: backtick).
+# Pick something you don't normally type at the start of a query.
+# file_prefix        = "`"
 
 # ---------------------------------------------------------------------------
 # Aliases
@@ -361,7 +387,7 @@ show_path            = true          # show file path in result subtitle
             // General
             case ("general", "editor"):      general.editor = value
             // Search
-            case ("search", "engine"):       search.engine = value
+            case ("search", "web_search"):   search.webSearch = value
             case ("search", "favicon_service"): search.faviconService = value
             case ("search", "show_system_commands"): search.showSystemCommands = (value == "true")
             case ("search", "show_path"):    search.showPath = (value == "true")
@@ -375,6 +401,20 @@ show_path            = true          # show file path in result subtitle
                     $0.trimmingCharacters(in: .whitespaces)
                         .replacingOccurrences(of: "~", with: home)
                 }
+            case ("search", "file_dirs"):
+                // Path-only — `~` is expanded inside FileIndex itself so
+                // the original config value can stay portable across users.
+                let parsed = value.split(separator: ",").map {
+                    $0.trimmingCharacters(in: .whitespaces)
+                }
+                // Empty list = disable file search; treat the literal
+                // string "" the same way to give users an obvious off switch.
+                search.fileDirs = parsed.filter { !$0.isEmpty }
+            case ("search", "file_prefix"):
+                // Take the first character — quietly ignore longer values
+                // rather than failing the whole config load. A multi-char
+                // prefix would clash with normal typing too easily.
+                if let first = value.first { search.filePrefix = String(first) }
             // Aliases — flat form: `key = "value"`
             case ("aliases", _):             aliases[key] = value
             // Aliases — sub-table form: `[aliases.<key>]` then `name = ...` /

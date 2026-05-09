@@ -143,14 +143,16 @@ Behavior of the search engine, app indexer, and trailing fallback row.
 
 | Key                    | Type   | Default    | Notes |
 | ---------------------- | ------ | ---------- | ----- |
-| `engine`               | string | `"google"` | Web search engine name or URL template (see below). |
+| `web_search`           | string | `"google"` | Web search target for the trailing fallback row. Name or URL template (see below). |
 | `show_system_commands` | bool   | `true`     | Surface Lock Screen / Sleep / Restart / etc. in results. |
 | `show_path`            | bool   | `true`     | Show file path as result subtitle. Hide for a cleaner list. |
 | `favicon_service`      | string | `"google"` | Where to fetch URL-alias favicons from (see below). |
 | `excluded_apps`        | csv    | `""`       | Comma-separated app display names to hide from the index. |
 | `app_dirs`             | csv    | `""`       | Extra directories to scan for `.app` bundles. `~` is expanded. |
+| `file_dirs`            | csv    | unset (= disabled)                    | Directories indexed for prefix-triggered file search. Fresh installs get `~/Documents, ~/Desktop, ~/Downloads` in the generated config. |
+| `file_prefix`          | string | `` "`" ``                             | Single character that activates file-search mode when typed first. |
 
-### Web search `engine`
+### `web_search`
 
 Built-in shorthands: `"google"`, `"duckduckgo"` (or `"ddg"`), `"bing"`.
 
@@ -158,9 +160,9 @@ For anything else, pass a URL template containing `{query}` where the
 search term should land. Walter URL-encodes the query before substitution:
 
 ```toml
-engine = "https://kagi.com/search?q={query}"
-engine = "https://html.duckduckgo.com/html/?q={query}"
-engine = "https://you.com/search?q={query}"
+web_search = "https://kagi.com/search?q={query}"
+web_search = "https://html.duckduckgo.com/html/?q={query}"
+web_search = "https://you.com/search?q={query}"
 ```
 
 The trailing fallback row reads "Search <name> for …" — for URL
@@ -210,6 +212,57 @@ app_dirs = /opt/myapps, ~/Tools
 
 Newly added directories are watched live — adding or removing a `.app`
 fires Walter's reindex within a second.
+
+### `file_dirs`
+
+Directories indexed for **prefix-triggered file search**. Type
+`` `<query> `` (with a leading backtick) to search filenames in these
+directories only. Outside of prefix mode the file index is invisible,
+so apps stay the first-class result type and never get pushed down by
+document hits. The prefix character is configurable via `file_prefix`.
+
+```toml
+file_dirs = ~/Documents, ~/Desktop, ~/Downloads
+```
+
+When Walter creates a config file for the first time, the three
+user-content folders above are pre-filled — but if the key is absent
+from your config, file search is **disabled**. Walter never indexes
+disk content you didn't ask it to. Upgrading the app never silently
+expands the index.
+
+**Skip rules** — Walter never recurses into these subdirectory names:
+`.git`, `.svn`, `.hg`, `node_modules`, `.build`, `build`, `dist`,
+`target`, `Pods`, `.bundle`, `.cache`, `Library`. macOS bundle types
+(`.app`, `.bundle`, `.framework`, `.kext`, `.plugin`, `.appex`,
+`.rtfd`, `.photoslibrary`, `.musiclibrary`, `.tvlibrary`,
+`.fcpbundle`, `.logicx`, `.garageband`) are treated as opaque leaves
+so the user can find them by name without flooding the index with
+their internals.
+
+Hidden files (anything starting with `.`) are skipped. The whole index
+is hard-capped at 50,000 entries; if you trip it Walter logs a warning
+and you should narrow `file_dirs`. Listing `~/Code` or `~/` will hit
+the cap quickly — point Walter at user-content folders instead.
+
+Files are watched via FSEvents, so creating, deleting, or renaming a
+file in any indexed directory updates Walter's catalog within ~2
+seconds.
+
+### `file_prefix`
+
+Single character that activates file-search mode. Default is `` ` ``
+(backtick). Pick any character you don't normally type at the start
+of a query — apostrophe (`'`), colon (`:`), and slash (`/`) are
+common alternatives.
+
+```toml
+file_prefix = "/"
+```
+
+If `file_dirs` is empty, hitting the prefix surfaces a one-row
+shortcut that opens `config.toml` in your editor so you can fill in
+the directories without leaving the launcher.
 
 ---
 

@@ -127,7 +127,7 @@ mode        = "list"                   # list | grid (Spotlight-Tahoe tiles)
 open  = "Alt+Space"                    # any combo: Alt+Tab, Cmd+Space, Ctrl+Shift+K
 
 [search]
-engine          = "google"             # or any "https://...{query}..." template
+web_search      = "google"             # or any "https://...{query}..." template
 favicon_service = "google"             # google | duckduckgo | iconhorse | custom
 
 [aliases.y]                            # named, parameterized alias

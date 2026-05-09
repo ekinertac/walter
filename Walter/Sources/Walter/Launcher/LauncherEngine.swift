@@ -28,6 +28,7 @@ enum ResultAction {
     case shell(String)
     case copy(String)
     case url(String)
+    case openInEditor(String)      // opens a file in the user's preferred editor
     case systemCommand(SystemCommand)
     case enterThemePicker          // switches UI to theme browsing mode
     case applyTheme(String)        // applies a theme by name and writes to config
@@ -36,6 +37,7 @@ enum ResultAction {
 class LauncherEngine {
 
     private let appIndex: AppIndex
+    private let fileIndex: FileIndex
     private let frecency = FrecencyTracker()
     private let calculator = Calculator()
     private let converter = Converter()
@@ -43,15 +45,32 @@ class LauncherEngine {
     private var systemCommands: SystemCommands!
     private weak var config: ConfigManager?
 
+    /// Prefix character that activates file-search mode. Sourced from
+    /// `[search] file_prefix` so users can pick whatever feels natural;
+    /// defaults to backtick because it's reachable on most layouts and
+    /// doesn't clash with anything else in the input vocabulary.
+    private var filePrefix: Character {
+        config?.search.filePrefix.first ?? "`"
+    }
+
     init(config: ConfigManager, extraAppDirs: [String] = [], onIndexChanged: @escaping () -> Void = {}) {
         self.config = config
         systemCommands = SystemCommands(config: config)
         appIndex = AppIndex(extraDirs: extraAppDirs, onChange: onIndexChanged)
+        fileIndex = FileIndex(dirs: config.search.fileDirs, onChange: onIndexChanged)
     }
 
     func search(query: String) -> [SearchResult] {
         let q = query.trimmingCharacters(in: .whitespaces)
         if q.isEmpty { return [] }
+
+        // File-search mode short-circuit. When the query starts with the
+        // file prefix (`'`) we drop straight into FileIndex and skip the
+        // app/pane/alias/computed-answer pool — the user's intent is
+        // explicit and mixing in apps would defeat the point.
+        if q.first == filePrefix {
+            return fileSearchResults(rawQuery: q)
+        }
 
         var pinnedTop: [SearchResult] = []
         var scored: [(result: SearchResult, score: Double)] = []
@@ -285,12 +304,106 @@ class LauncherEngine {
         )
     }
 
+    /// Builds the file-search result list for queries beginning with the
+    /// file prefix. The web fallback still appears so a typo'd file name
+    /// can be sent to the search engine without leaving prefix mode.
+    private func fileSearchResults(rawQuery: String) -> [SearchResult] {
+        // Strip the prefix character (and any whitespace right after it)
+        // before fuzzy-matching against filenames.
+        let stripped = rawQuery
+            .dropFirst()
+            .trimmingCharacters(in: .whitespaces)
+
+        let dirs = config?.search.fileDirs ?? []
+
+        // Setup path: if the user hasn't configured any file_dirs we
+        // surface a single actionable row that opens config.toml in their
+        // editor, instead of looking broken or silently doing nothing.
+        if dirs.isEmpty {
+            return fileSearchSetupResults()
+        }
+
+        var results: [SearchResult] = []
+        let prefixChar = String(filePrefix)
+
+        if stripped.isEmpty {
+            // Prefix typed but nothing else — show a quick reminder of
+            // what mode we're in plus the dir count, instead of dumping
+            // every indexed file into the panel.
+            let icon = NSImage(systemSymbolName: "doc.text.magnifyingglass",
+                               accessibilityDescription: "File search")
+            let dirsBlurb = dirs.count == 1 ? "1 directory" : "\(dirs.count) directories"
+            results.append(SearchResult(
+                title: "Search files",
+                subtitle: "Type a filename after \(prefixChar) to search \(dirsBlurb)",
+                icon: icon,
+                action: .copy("")
+            ))
+            return results
+        }
+
+        let matches = fileIndex.search(query: stripped)
+            .sorted { $0.score > $1.score }
+            .prefix(25)
+
+        let showPath = config?.search.showPath ?? true
+        for (entry, _) in matches {
+            let icon = NSWorkspace.shared.icon(forFile: entry.path)
+            icon.size = NSSize(width: 64, height: 64)
+            results.append(SearchResult(
+                title: entry.name,
+                subtitle: showPath ? entry.path : "",
+                icon: icon,
+                action: .open(entry.path)
+            ))
+        }
+
+        // Always offer the web-search escape hatch — typing `<prefix>foo`
+        // with no matches shouldn't strand the user.
+        results.append(makeWebFallback(query: stripped))
+
+        return results
+    }
+
+    /// Two-row guidance shown when the user hits the file prefix but
+    /// hasn't told Walter which directories to index. The first row is a
+    /// one-click jump to config.toml so the user can fix it without
+    /// leaving the launcher; the second row carries the example syntax
+    /// they need to paste in.
+    private func fileSearchSetupResults() -> [SearchResult] {
+        var results: [SearchResult] = []
+        let bookIcon = NSImage(systemSymbolName: "book.closed",
+                               accessibilityDescription: "Documentation")
+
+        if let config = config {
+            let openIcon = NSImage(systemSymbolName: "doc.text.magnifyingglass",
+                                   accessibilityDescription: "Open config")
+            results.append(SearchResult(
+                title: "File search isn't configured yet",
+                subtitle: "Press Enter to open config.toml — add `file_dirs` under [search]",
+                icon: openIcon,
+                action: .openInEditor(config.configURL.path)
+            ))
+        }
+
+        // Carry the canonical example as a second row so the user can
+        // simply read it off the screen rather than open the docs.
+        results.append(SearchResult(
+            title: "Example",
+            subtitle: "[search] file_dirs = ~/Documents, ~/Desktop, ~/Downloads",
+            icon: bookIcon,
+            action: .copy("file_dirs = ~/Documents, ~/Desktop, ~/Downloads")
+        ))
+
+        return results
+    }
+
     /// Builds the trailing web-search fallback result. Honors the user's
     /// configured engine, which may be a built-in name (google/ddg/bing)
     /// or a full URL template containing `{query}`.
     private func makeWebFallback(query: String) -> SearchResult {
         let encoded = query.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? query
-        let engine = config?.search.engine ?? "google"
+        let engine = config?.search.webSearch ?? "google"
         let (engineName, webURL) = searchEngineURL(engine: engine, query: encoded)
         let webIcon = NSImage(systemSymbolName: "magnifyingglass.circle", accessibilityDescription: "Web search")
         return SearchResult(
@@ -319,6 +432,13 @@ class LauncherEngine {
         case .copy(let text):
             NSPasteboard.general.clearContents()
             NSPasteboard.general.setString(text, forType: .string)
+        case .openInEditor(let path):
+            let editor = SystemCommands.resolveEditorPath(configured: config?.general.editor ?? "")
+            NSWorkspace.shared.open(
+                [URL(fileURLWithPath: path)],
+                withApplicationAt: URL(fileURLWithPath: editor),
+                configuration: NSWorkspace.OpenConfiguration()
+            )
         case .systemCommand(let cmd):
             if cmd.needsConfirmation {
                 guard SystemCommands.confirm(action: cmd.name) else { return }
