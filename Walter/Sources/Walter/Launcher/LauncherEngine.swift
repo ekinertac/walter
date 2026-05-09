@@ -1,13 +1,16 @@
 // LauncherEngine.swift — Core search and launch logic
 //
-// Result sources (in display order):
-//   1. Calculator (if query looks like math)
-//   2. Currency / unit conversion (if query matches pattern)
-//   3. Aliases (exact prefix match from [aliases] config)
-//   4. System commands (lock, sleep, restart, etc.)
-//   5. System Settings panes (Bluetooth, Display, ...)
-//   6. Apps (fuzzy matched, frecency-boosted)
-//   7. Web search fallback (always last)
+// Result layout:
+//   1. Calculator / converter answers — pinned to the top because they
+//      are computed answers, not search results, and there is nothing
+//      meaningful to score them against.
+//   2. A unified pool of fuzzy-scored results — apps, system commands,
+//      System Settings panes, aliases, and the "Change Theme" action all
+//      compete in one ranked list. Apps additionally receive a frecency
+//      boost so frequently-launched apps win against equally-named items
+//      from other categories.
+//   3. Web search fallback — always pinned to the bottom so the user can
+//      always escape to a web query.
 //
 // Called by: LauncherPanelController on every keystroke.
 
@@ -50,14 +53,17 @@ class LauncherEngine {
         let q = query.trimmingCharacters(in: .whitespaces)
         if q.isEmpty { return [] }
 
-        var results: [SearchResult] = []
+        var pinnedTop: [SearchResult] = []
+        var scored: [(result: SearchResult, score: Double)] = []
 
-        // 1. Currency / unit conversion (checked first — "100 km in miles"
-        //    should not trigger the calculator)
+        // ----- Pinned top: calculator + converter answers ----------------
+        // Computed answers, not searchable items — there is no fuzzy score
+        // to compare them against, so they always lead the list.
+
         let conversions = converter.convert(query: q)
         if !conversions.isEmpty {
             let icon = NSImage(systemSymbolName: "arrow.left.arrow.right", accessibilityDescription: "Convert")
-            results += conversions.map { conv in
+            pinnedTop += conversions.map { conv in
                 SearchResult(
                     title: conv.title,
                     subtitle: "\(conv.subtitle) — Enter to copy",
@@ -66,12 +72,11 @@ class LauncherEngine {
                 )
             }
         }
-
-        // 2. Calculator (skip if converter already matched — avoids
-        //    "1920x1080" showing both a conversion and a multiplication)
+        // Skip the calculator if a conversion already matched, otherwise
+        // "1920x1080" produces both a multiplication and a resolution conv.
         if conversions.isEmpty, let calc = calculator.evaluate(query: q) {
             let icon = NSImage(systemSymbolName: "equal.circle", accessibilityDescription: "Calculator")
-            results.append(SearchResult(
+            pinnedTop.append(SearchResult(
                 title: calc.answer,
                 subtitle: "\(calc.expression) — Enter to copy",
                 icon: icon,
@@ -79,17 +84,24 @@ class LauncherEngine {
             ))
         }
 
-        // 3. Aliases from config
+        // ----- Scored pool: apps, sys cmds, panes, aliases, theme entry --
+        // All searchable items live in a single ranked list keyed by the
+        // fuzzy score against the query. Apps additionally receive a
+        // frecency boost so a heavily-used app outranks an unrelated
+        // pane / alias / system command with the same prefix.
+
+        // Aliases — fuzzy on the alias key.
         if let aliases = config?.aliases {
             let ql = q.lowercased()
             for (key, value) in aliases {
-                guard fuzzyMatch(query: ql, target: key).matched else { continue }
+                let match = fuzzyMatch(query: ql, target: key)
+                guard match.matched else { continue }
+
                 let icon = NSImage(systemSymbolName: "link", accessibilityDescription: "Alias")
                 let action: ResultAction
                 let subtitle: String
 
                 if value.hasPrefix("!") {
-                    // Shell command alias: !curl -s ifconfig.me
                     let cmd = String(value.dropFirst())
                     action = .shell(cmd)
                     subtitle = "Run: \(cmd)"
@@ -101,75 +113,74 @@ class LauncherEngine {
                     subtitle = value
                 }
 
-                results.append(SearchResult(title: key, subtitle: subtitle, icon: icon, action: action))
+                let result = SearchResult(title: key, subtitle: subtitle, icon: icon, action: action)
+                scored.append((result, Double(match.score)))
             }
         }
 
-        // 4. "Change Theme" action — fuzzy matched like any other result
+        // "Change Theme" entry — fuzzy on a fixed label.
         let themeMatch = fuzzyMatch(query: q, target: "Change Theme")
         if themeMatch.matched {
             let icon = NSImage(systemSymbolName: "paintpalette", accessibilityDescription: "Theme")
-            results.append(SearchResult(
+            let result = SearchResult(
                 title: "Change Theme",
                 subtitle: "Browse and apply built-in themes",
                 icon: icon,
                 action: .enterThemePicker
-            ))
+            )
+            scored.append((result, Double(themeMatch.score)))
         }
 
-        // 5. System commands
+        // System commands.
         if config?.search.showSystemCommands != false {
-            let sysResults = systemCommands.search(query: q)
-            for item in sysResults.prefix(4) {
+            for item in systemCommands.search(query: q) {
                 let icon = NSImage(systemSymbolName: item.command.iconName, accessibilityDescription: item.command.name)
-                results.append(SearchResult(
+                let result = SearchResult(
                     title: item.command.name,
                     subtitle: item.command.subtitle,
                     icon: icon,
                     action: .systemCommand(item.command)
-                ))
+                )
+                scored.append((result, Double(item.score)))
             }
         }
 
-        // 5b. System Settings panes (Bluetooth, Display, Network, ...).
-        //     Surfaced before apps so "Bluetooth" matches the pane, not a
-        //     random app. Capped at top 4 to avoid drowning out apps.
-        let paneResults = prefPanes.search(query: q)
-        for item in paneResults.prefix(4) {
+        // System Settings panes.
+        for item in prefPanes.search(query: q) {
             let icon = NSImage(systemSymbolName: item.pane.iconName, accessibilityDescription: item.pane.name)
-            results.append(SearchResult(
+            let result = SearchResult(
                 title: item.pane.name,
                 subtitle: "System Settings",
                 icon: icon,
                 action: .url(item.pane.url)
-            ))
+            )
+            scored.append((result, Double(item.score)))
         }
 
-        // 6. Apps (fuzzy + frecency)
+        // Apps with frecency boost.
         let excluded = Set(config?.search.excludedApps.map { $0.lowercased() } ?? [])
-        var scored: [(entry: AppEntry, score: Double)] = []
-
+        let showPath = config?.search.showPath ?? true
         for entry in appIndex.allEntries {
             if excluded.contains(entry.nameLower) { continue }
-            let result = fuzzyMatch(query: q, target: entry.name)
-            guard result.matched else { continue }
+            let match = fuzzyMatch(query: q, target: entry.name)
+            guard match.matched else { continue }
             let frecencyBoost = frecency.score(for: entry.path) * 10
-            scored.append((entry, Double(result.score) + frecencyBoost))
+            let result = SearchResult(
+                title: entry.name,
+                subtitle: showPath ? entry.path : "",
+                icon: entry.icon,
+                action: .open(entry.path)
+            )
+            scored.append((result, Double(match.score) + frecencyBoost))
         }
 
         scored.sort { $0.score > $1.score }
 
-        let showPath = config?.search.showPath ?? true
-        results += scored.prefix(20).map { item in
-            SearchResult(
-                title: item.entry.name,
-                subtitle: showPath ? item.entry.path : "",
-                icon: item.entry.icon,
-                action: .open(item.entry.path)
-            )
-        }
+        var results = pinnedTop
+        results += scored.prefix(25).map { $0.result }
 
-        // 7. Web search fallback
+        // ----- Pinned bottom: web search fallback -----------------------
+
         let encoded = q.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? q
         let engine = config?.search.engine ?? "google"
         let (engineName, webURL) = searchEngineURL(engine: engine, query: encoded)
