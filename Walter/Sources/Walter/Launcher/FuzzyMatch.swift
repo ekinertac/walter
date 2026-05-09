@@ -44,6 +44,19 @@ func fuzzyMatch(query: String, target: String) -> FuzzyResult {
         score += 15
     }
 
+    // Bonus: the entire query is a contiguous prefix of the target
+    // ("to" -> "Tolaria"). This is by far the strongest user signal —
+    // somebody typing the first letters of an app name almost always
+    // wants that exact app, even when a heavily-used app contains the
+    // same letters scattered (e.g. "to" -> "Stremio"). Big enough to
+    // beat the frecency boost on long-tail apps without overwhelming
+    // genuine ties.
+    let qLower = query.lowercased()
+    let tLower = target.lowercased()
+    if tLower.hasPrefix(qLower) {
+        score += 60
+    }
+
     // Bonus: word boundary matches (char preceded by space/dash/underscore or camelCase)
     let originalChars = Array(target)
     var boundaryCount = 0

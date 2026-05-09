@@ -158,13 +158,23 @@ class LauncherEngine {
         }
 
         // Apps with frecency boost.
+        // The boost is capped so heavy use of one app cannot drown out a
+        // better-matching different app. Without the cap, opening the
+        // launcher and typing "to" while Stremio has been launched
+        // dozens of times would always surface Stremio above Tolaria,
+        // even though "to" is a clean prefix of Tolaria and a poor
+        // scattered match in Stremio. The cap is comparable to the
+        // prefix-match bonus, so frecency tunes ranking among similar
+        // matches but cannot overwhelm a clearly stronger candidate.
         let excluded = Set(config?.search.excludedApps.map { $0.lowercased() } ?? [])
         let showPath = config?.search.showPath ?? true
+        let maxFrecencyBoost: Double = 40
         for entry in appIndex.allEntries {
             if excluded.contains(entry.nameLower) { continue }
             let match = fuzzyMatch(query: q, target: entry.name)
             guard match.matched else { continue }
-            let frecencyBoost = frecency.score(for: entry.path) * 10
+            let rawBoost = frecency.score(for: entry.path) * 10
+            let frecencyBoost = min(rawBoost, maxFrecencyBoost)
             let result = SearchResult(
                 title: entry.name,
                 subtitle: showPath ? entry.path : "",
