@@ -96,9 +96,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 
     @objc private func openConfig() {
         let configPath = config.configURL.path
-        let editorPath = config.general.editor.isEmpty
-            ? "/System/Applications/TextEdit.app"
-            : config.general.editor
+        let editorPath = SystemCommands.resolveEditorPath(configured: config.general.editor)
 
         NSWorkspace.shared.open(
             [URL(fileURLWithPath: configPath)],

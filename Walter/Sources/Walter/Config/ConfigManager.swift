@@ -38,6 +38,11 @@ class ConfigManager {
         var showPath: Bool = true
         var excludedApps: [String] = []
         var extraAppDirs: [String] = []
+        /// Where to fetch URL-alias favicons from. Either a known shorthand
+        /// (`google` / `duckduckgo` / `iconhorse`) or a full URL template
+        /// containing `{host}`. Defaults to Google's S2 service at 128px,
+        /// which is by far the highest-resolution free option.
+        var faviconService: String = "google"
     }
 
     struct General {
@@ -50,6 +55,7 @@ class ConfigManager {
     var general = General()
     var search = Search()
     var aliases: [String: String] = [:]
+    var aliasNames: [String: String] = [:]   // optional display name per alias key
     var userThemes: [String: ThemePreset] = [:]   // loaded from ~/.config/walter/themes/*.theme
 
     /// Built-in + user themes, with user winning on name collision.
@@ -100,6 +106,7 @@ class ConfigManager {
         general = General()
         search = Search()
         aliases = [:]
+        aliasNames = [:]
         userThemes = [:]
         load()
         print("Config hot-reloaded")
@@ -116,59 +123,136 @@ class ConfigManager {
         try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
 
         let defaults = """
-# Walter configuration
-# Changes are applied live — just save the file.
+# Walter configuration — reference file
+#
+# Changes apply live — just save. Comments start with '#'.
+# Full docs: https://github.com/ekinertac/walter/blob/master/docs/config.md
+#
+# Sections (in order below):
+#   [theme]        — colors, fonts, blur, corner radius
+#   [layout]       — window size, position, scale, list-vs-grid mode
+#   [keybindings]  — global hotkey + close key
+#   [general]      — preferred text editor for "Open Config"
+#   [search]       — web engine, favicon service, indexed app dirs
+#   [aliases]      — user shortcuts, plain or parameterized
 
+# ---------------------------------------------------------------------------
+# Theme
+# ---------------------------------------------------------------------------
+# Built-in presets (set `name` to one of these to apply them):
+#   spotlight (transparent, system vibrancy only)
+#   Dark   — catppuccin-mocha, catppuccin-macchiato, catppuccin-frappe,
+#            nord, dracula, gruvbox, solarized-dark, rose-pine,
+#            rose-pine-moon, tokyo-night, one-dark, kanagawa,
+#            everforest, ayu-dark
+#   Light  — catppuccin-latte, solarized-light, rose-pine-dawn,
+#            ayu-light, everforest-light, github-light
+# Custom themes: drop a *.theme file under ~/.config/walter/themes/
+# (auto-created with example.theme on first run) and reference it by
+# filename (without extension) here.
 [theme]
-# Built-in themes: spotlight, catppuccin-mocha, catppuccin-latte,
-#   catppuccin-macchiato, catppuccin-frappe, nord, dracula, gruvbox,
-#   solarized-dark, solarized-light, rose-pine, rose-pine-moon,
-#   rose-pine-dawn, tokyo-night, one-dark, kanagawa, everforest,
-#   everforest-light, ayu-dark, ayu-light, github-light
-# Set a theme name to use its presets (individual colors below are ignored):
-# name          = "catppuccin-mocha"
-background    = "#1e1e2e"
+# name        = "catppuccin-mocha"   # presets override the colors below
+background    = "#1e1e2e"            # CSS-style hex; "#00000000" = transparent
 foreground    = "#cdd6f4"
 accent        = "#cba6f7"
-border_radius = 12
-font          = "SF Pro"       # any installed font name, or "system"
+border_radius = 12                   # window corner radius in px
+font          = "SF Pro"             # any installed font name, or "system"
 font_size     = 14
-blur_material = "hudWindow"    # hudWindow | sidebar | popover | sheet
+# blur_material accepts: hudWindow | sidebar | popover | sheet | dark | light
+blur_material = "hudWindow"
 
+# ---------------------------------------------------------------------------
+# Layout
+# ---------------------------------------------------------------------------
 [layout]
-width       = 780              # base width in pixels (before scaling)
-max_results = 8                # max visible result rows
-position    = "center"         # center | top
-scale       = 1.0              # UI scale: 1.0 = default, 2.0 = double
+width       = 780                    # base width in pixels (before scaling)
+max_results = 8                      # max visible result rows
+position    = "center"               # center | top
+scale       = 1.0                    # UI scale: 1.0 = default, 2.0 = double
 placeholder = "Search apps, calculate, convert..."
-mode        = "list"           # list | grid (grid = Spotlight-Tahoe icon tiles)
+# mode picks the result renderer:
+#   list — Alfred/Raycast-style row list (default)
+#   grid — Spotlight-Tahoe-style icon tiles (5 cols × 3 rows)
+mode        = "list"
 
-[keybindings]
+# ---------------------------------------------------------------------------
+# Keybindings
+# ---------------------------------------------------------------------------
 # Modifiers: Alt/Option, Cmd/Command, Ctrl/Control, Shift
-# Keys: Space, Tab, Return, A-Z, 0-9, F1-F12, Up, Down, Left, Right
-open  = "Alt+Space"
-close = "Escape"
+# Keys:      Space, Tab, Return, A-Z, 0-9, F1-F12, Up, Down, Left, Right
+[keybindings]
+open  = "Alt+Space"                  # global toggle
+close = "Escape"                     # close (also unfocuses to previous app)
 
+# ---------------------------------------------------------------------------
+# General
+# ---------------------------------------------------------------------------
+# Preferred text editor for the "Open Config" action and Cmd+,.
+# Leave empty to auto-detect — Walter checks (in order):
+#   CotEditor, BBEdit, Sublime Text, VS Code, Cursor, Zed,
+#   Zed Preview, Nova, MacVim, then TextEdit as a last resort.
 [general]
-# Preferred text editor for "Open Config" command.
-# Leave empty to auto-detect (VS Code, Zed, Sublime Text, etc.)
-# editor = "/Applications/Visual Studio Code.app"
+# editor = "/Applications/CotEditor.app"
 
+# ---------------------------------------------------------------------------
+# Search
+# ---------------------------------------------------------------------------
 [search]
-engine               = "google"    # google | duckduckgo | bing
-show_system_commands = true
-show_path            = true        # show file path in result subtitle
+# Web search engine for the trailing fallback row. Either a built-in
+# name (google | duckduckgo | bing) or a full URL template that contains
+# {query}, e.g.
+#   engine = "https://kagi.com/search?q={query}"
+#   engine = "https://html.duckduckgo.com/html/?q={query}"
+engine               = "google"
+
+show_system_commands = true          # Lock Screen, Sleep, Restart, ...
+show_path            = true          # show file path in result subtitle
+
+# Favicon service for URL aliases. Either a built-in shorthand or a URL
+# template containing {host}:
+#   "google"     — Google S2, up to 128px (best quality, default)
+#   "duckduckgo" — DDG icon service, 32px (privacy-friendlier, low-res)
+#   "iconhorse"  — icon.horse, returns site's largest icon
+#   "https://api.faviconkit.com/{host}/144"   # custom template
+# favicon_service     = "google"
+
+# Hide specific apps from the index (comma-separated, name as displayed):
 # excluded_apps      = Siri, News, Stocks
+
 # Extra directories to scan for .app bundles (comma-separated):
 # app_dirs           = /opt/myapps, ~/Tools
 
-# Custom aliases — type the key to open the value.
-# Values can be URLs, app paths, or shell commands (prefix with !)
+# ---------------------------------------------------------------------------
+# Aliases
+# ---------------------------------------------------------------------------
+# Type the key to fire the value. Values can be:
+#   - URLs        ("https://...")     — opened in default browser
+#   - App / file  ("/Applications/..., /Users/...")   — opened via NSWorkspace
+#   - Shell cmd   ("!curl -s example.com")            — run via /bin/sh -c
+#
+# Add {query} anywhere in the value to make the alias parameterized.
+# Type "<key> <text>" and <text> is substituted before firing. URL
+# aliases URL-encode the query; shell aliases pass it through raw.
+#
+# Flat form — alias key is the display name:
 [aliases]
 # gh    = "https://github.com"
 # mail  = "/System/Applications/Mail.app"
 # ip    = "!curl -s ifconfig.me"
-# yt    = "https://youtube.com"
+
+# Sub-table form — adds a friendly display name. The launcher UI reads
+# "YouTube → cat videos" instead of just "y → cat videos".
+# [aliases.y]
+# name = "YouTube"
+# url  = "https://www.youtube.com/results?search_query={query}"
+#
+# [aliases.gh-s]
+# name = "GitHub Search"
+# url  = "https://github.com/search?q={query}"
+#
+# [aliases.?]
+# name = "Ask Claude"
+# url  = "https://claude.ai/new?q={query}"
 """
 
         try? defaults.write(to: url, atomically: true, encoding: .utf8)
@@ -218,12 +302,26 @@ show_path            = true        # show file path in result subtitle
         }
 
         var currentSection = ""
+        // When inside an `[aliases.<key>]` subsection, this holds <key> so
+        // we know which alias the contained `name`/`url` keys belong to.
+        var currentAliasKey: String? = nil
+
         for line in content.components(separatedBy: .newlines) {
             let trimmed = line.trimmingCharacters(in: .whitespaces)
             if trimmed.isEmpty || trimmed.hasPrefix("#") { continue }
 
             if trimmed.hasPrefix("[") && trimmed.hasSuffix("]") {
-                currentSection = String(trimmed.dropFirst().dropLast())
+                let raw = String(trimmed.dropFirst().dropLast())
+                if raw.hasPrefix("aliases.") {
+                    // Sub-table form: `[aliases.foo]` declares alias key `foo`
+                    // and switches to a section that accepts `name = ...`
+                    // and `url = ...` (or the legacy `value`/`path`/`cmd`).
+                    currentSection = "alias_subtable"
+                    currentAliasKey = String(raw.dropFirst("aliases.".count))
+                } else {
+                    currentSection = raw
+                    currentAliasKey = nil
+                }
                 continue
             }
 
@@ -264,6 +362,7 @@ show_path            = true        # show file path in result subtitle
             case ("general", "editor"):      general.editor = value
             // Search
             case ("search", "engine"):       search.engine = value
+            case ("search", "favicon_service"): search.faviconService = value
             case ("search", "show_system_commands"): search.showSystemCommands = (value == "true")
             case ("search", "show_path"):    search.showPath = (value == "true")
             case ("search", "excluded_apps"):
@@ -276,8 +375,19 @@ show_path            = true        # show file path in result subtitle
                     $0.trimmingCharacters(in: .whitespaces)
                         .replacingOccurrences(of: "~", with: home)
                 }
-            // Aliases
+            // Aliases — flat form: `key = "value"`
             case ("aliases", _):             aliases[key] = value
+            // Aliases — sub-table form: `[aliases.<key>]` then `name = ...` /
+            // `url = ...`. The display name surfaces in the launcher UI so
+            // a parameterized alias can read as e.g. "YouTube → cat videos"
+            // instead of just "y → cat videos".
+            case ("alias_subtable", "name"):
+                if let k = currentAliasKey { aliasNames[k] = value }
+            case ("alias_subtable", "url"),
+                 ("alias_subtable", "value"),
+                 ("alias_subtable", "path"),
+                 ("alias_subtable", "cmd"):
+                if let k = currentAliasKey { aliases[k] = value }
             default: break
             }
         }
@@ -290,6 +400,18 @@ show_path            = true        # show file path in result subtitle
             theme.foreground = preset.foreground
             theme.accent = preset.accent
             print("Theme applied: \(themeName)")
+        }
+
+        // Update the favicon cache to whichever service the user picked
+        // and warm it for every URL alias so parameterized aliases pick up
+        // site icons without a startup-blocking fetch.
+        FaviconCache.shared.serviceTemplate = FaviconCache.template(for: search.faviconService)
+        let aliasHosts = aliases.values.compactMap { value -> String? in
+            guard value.hasPrefix("http://") || value.hasPrefix("https://") else { return nil }
+            return FaviconCache.hostname(for: value)
+        }
+        if !aliasHosts.isEmpty {
+            FaviconCache.shared.prefetch(hostnames: aliasHosts)
         }
 
         print("Config loaded from \(configURL.path)")

@@ -90,32 +90,85 @@ class LauncherEngine {
         // frecency boost so a heavily-used app outranks an unrelated
         // pane / alias / system command with the same prefix.
 
-        // Aliases — fuzzy on the alias key.
+        // Aliases.
+        //
+        // Two flavours:
+        //   * Plain (no `{query}` in value): fuzzy-matched against the
+        //     alias key like everything else.
+        //   * Parameterized (value contains `{query}`): triggers in command
+        //     mode — the user types "<key> <rest>" and `<rest>` is
+        //     substituted into the value. When a parameterized alias is
+        //     hit we skip the rest of the scored pool so a YouTube search
+        //     ("y cat videos") doesn't surface unrelated app matches for
+        //     "cat" or "videos". Web fallback still appears at the bottom.
+        var parameterizedAliasMatched = false
         if let aliases = config?.aliases {
             let ql = q.lowercased()
-            for (key, value) in aliases {
-                let match = fuzzyMatch(query: ql, target: key)
-                guard match.matched else { continue }
 
-                let icon = NSImage(systemSymbolName: "link", accessibilityDescription: "Alias")
-                let action: ResultAction
-                let subtitle: String
-
-                if value.hasPrefix("!") {
-                    let cmd = String(value.dropFirst())
-                    action = .shell(cmd)
-                    subtitle = "Run: \(cmd)"
-                } else if value.hasPrefix("http://") || value.hasPrefix("https://") {
-                    action = .url(value)
-                    subtitle = value
-                } else {
-                    action = .open(value)
-                    subtitle = value
+            // First, look for a "<key> <rest>" parameterized hit. This wins
+            // over plain alias matches because the user's intent is explicit.
+            if let firstSpace = q.firstIndex(of: " ") {
+                let key = String(q[..<firstSpace]).lowercased()
+                let rest = String(q[q.index(after: firstSpace)...]).trimmingCharacters(in: .whitespaces)
+                if let value = aliases[key], value.contains("{query}"), !rest.isEmpty {
+                    let displayName = config?.aliasNames[key] ?? key
+                    let result = makeParameterizedAliasResult(displayName: displayName, value: value, query: rest)
+                    pinnedTop.append(result)
+                    parameterizedAliasMatched = true
+                    // Trigger fetch for newly-encountered aliases so the
+                    // next render picks up the favicon even if config
+                    // wasn't reloaded since the alias was added.
+                    if let host = FaviconCache.hostname(for: value) {
+                        FaviconCache.shared.prefetch(hostnames: [host])
+                    }
                 }
-
-                let result = SearchResult(title: key, subtitle: subtitle, icon: icon, action: action)
-                scored.append((result, Double(match.score)))
             }
+
+            if !parameterizedAliasMatched {
+                for (key, value) in aliases {
+                    // Skip parameterized aliases when the user hasn't typed
+                    // a query yet — showing them with no value is noise.
+                    if value.contains("{query}") { continue }
+
+                    let match = fuzzyMatch(query: ql, target: key)
+                    guard match.matched else { continue }
+
+                    var icon: NSImage? = NSImage(systemSymbolName: "link", accessibilityDescription: "Alias")
+                    let action: ResultAction
+                    let subtitle: String
+
+                    if value.hasPrefix("!") {
+                        let cmd = String(value.dropFirst())
+                        action = .shell(cmd)
+                        subtitle = "Run: \(cmd)"
+                    } else if value.hasPrefix("http://") || value.hasPrefix("https://") {
+                        action = .url(value)
+                        subtitle = value
+                        if let host = FaviconCache.hostname(for: value),
+                           let favicon = FaviconCache.shared.image(for: host) {
+                            icon = favicon
+                        }
+                    } else {
+                        action = .open(value)
+                        subtitle = value
+                    }
+
+                    let displayName = config?.aliasNames[key] ?? key
+                    let result = SearchResult(title: displayName, subtitle: subtitle, icon: icon, action: action)
+                    scored.append((result, Double(match.score)))
+                }
+            }
+        }
+
+        // Skip the rest of the scored pool if a parameterized alias is
+        // active — the user's intent is explicit, no need to suggest
+        // unrelated apps that happen to fuzzy-match the alias arguments.
+        if parameterizedAliasMatched {
+            var results = pinnedTop
+            // Still emit the web fallback so the user can escape to a
+            // generic search if they typed the wrong alias key.
+            results.append(makeWebFallback(query: q))
+            return results
         }
 
         // "Change Theme" entry — fuzzy on a fixed label.
@@ -191,18 +244,61 @@ class LauncherEngine {
 
         // ----- Pinned bottom: web search fallback -----------------------
 
-        let encoded = q.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? q
+        results.append(makeWebFallback(query: q))
+
+        return results
+    }
+
+    /// Builds a search result for the parameterized alias that just matched.
+    /// `value` is the raw alias value (URL, !shell, or path) with `{query}`
+    /// placeholders; `query` is the text the user typed after the alias key.
+    private func makeParameterizedAliasResult(displayName: String, value: String, query: String) -> SearchResult {
+        let action: ResultAction
+        let subtitle: String
+        var icon: NSImage? = NSImage(systemSymbolName: "link", accessibilityDescription: "Alias")
+
+        if value.hasPrefix("!") {
+            let cmd = String(value.dropFirst()).replacingOccurrences(of: "{query}", with: query)
+            action = .shell(cmd)
+            subtitle = "Run: \(cmd)"
+        } else if value.hasPrefix("http://") || value.hasPrefix("https://") {
+            let encoded = query.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? query
+            let url = value.replacingOccurrences(of: "{query}", with: encoded)
+            action = .url(url)
+            subtitle = url
+            // Site favicon if we have one cached; otherwise the link symbol.
+            if let host = FaviconCache.hostname(for: value),
+               let favicon = FaviconCache.shared.image(for: host) {
+                icon = favicon
+            }
+        } else {
+            let path = value.replacingOccurrences(of: "{query}", with: query)
+            action = .open(path)
+            subtitle = path
+        }
+
+        return SearchResult(
+            title: "\(displayName) → \(query)",
+            subtitle: subtitle,
+            icon: icon,
+            action: action
+        )
+    }
+
+    /// Builds the trailing web-search fallback result. Honors the user's
+    /// configured engine, which may be a built-in name (google/ddg/bing)
+    /// or a full URL template containing `{query}`.
+    private func makeWebFallback(query: String) -> SearchResult {
+        let encoded = query.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? query
         let engine = config?.search.engine ?? "google"
         let (engineName, webURL) = searchEngineURL(engine: engine, query: encoded)
         let webIcon = NSImage(systemSymbolName: "magnifyingglass.circle", accessibilityDescription: "Web search")
-        results.append(SearchResult(
-            title: "Search \(engineName) for \"\(q)\"",
+        return SearchResult(
+            title: "Search \(engineName) for \"\(query)\"",
             subtitle: "Open in default browser",
             icon: webIcon,
             action: .url(webURL)
-        ))
-
-        return results
+        )
     }
 
     /// Executes a result action and records frecency for app launches.
@@ -330,7 +426,18 @@ class LauncherEngine {
         try? content.write(to: url, atomically: true, encoding: .utf8)
     }
 
+    /// Resolves the configured `engine` string into a (display name, URL)
+    /// pair. Accepts either a built-in name (google / duckduckgo / bing)
+    /// or a full URL template containing `{query}` — `query` is already
+    /// URL-encoded by the caller.
     private func searchEngineURL(engine: String, query: String) -> (name: String, url: String) {
+        if engine.contains("{query}") {
+            let url = engine.replacingOccurrences(of: "{query}", with: query)
+            // Pretty-print the host so the result line reads "Search
+            // youtube.com for ..." instead of repeating the full URL.
+            let name = URL(string: url)?.host?.replacingOccurrences(of: "www.", with: "") ?? "Web"
+            return (name, url)
+        }
         switch engine.lowercased() {
         case "duckduckgo", "ddg":
             return ("DuckDuckGo", "https://duckduckgo.com/?q=\(query)")
