@@ -356,10 +356,19 @@ file_dirs            = ~/Documents, ~/Desktop, ~/Downloads
             let key = parts[0].trimmingCharacters(in: .whitespaces)
             var raw = parts[1].trimmingCharacters(in: .whitespaces)
 
-            if !raw.hasPrefix("\"") {
-                if let commentIdx = raw.firstIndex(of: "#") {
-                    raw = String(raw[..<commentIdx]).trimmingCharacters(in: .whitespaces)
+            // Strip inline comments. For quoted values the `#` itself may be
+            // legal inside the string (e.g. hex colors), so we anchor on the
+            // closing quote instead: everything after it is comment-territory
+            // and gets dropped. Without this, a line like
+            //     mode = "grid" # grid|list
+            // parses as `grid" # grid|list`, which silently mismatches every
+            // mode comparison and looks like a bug at the call site.
+            if raw.hasPrefix("\"") {
+                if let closeIdx = raw.dropFirst().firstIndex(of: "\"") {
+                    raw = String(raw[...closeIdx])
                 }
+            } else if let commentIdx = raw.firstIndex(of: "#") {
+                raw = String(raw[..<commentIdx]).trimmingCharacters(in: .whitespaces)
             }
             let value = raw.trimmingCharacters(in: CharacterSet(charactersIn: "\""))
 
