@@ -464,49 +464,13 @@ extension LauncherPanelController: NSTextFieldDelegate {
         if commandSelector == #selector(NSResponder.moveUp(_:)) {
             moveSelection(dx: 0, dy: -1); return true
         }
-        // Horizontal arrows are shared between caret motion and grid
-        // navigation. Heuristic: while the caret has somewhere to go
-        // inside the text, Left/Right belong to the field editor.
-        // Once the caret hits an edge (and there's no active selection
-        // to collapse) we hand the keystroke to the grid so the user
-        // can keep moving sideways without first hitting Tab. In list
-        // mode this is a no-op — the grid view's 2D step ignores
-        // horizontal motion.
-        if commandSelector == #selector(NSResponder.moveLeft(_:)) {
-            if caretCanStillMoveLeft(in: textView) { return false }
-            if resultsView is ResultsGridView {
-                moveSelection(dx: -1, dy: 0); return true
-            }
-            return false
-        }
-        if commandSelector == #selector(NSResponder.moveRight(_:)) {
-            if caretCanStillMoveRight(in: textView) { return false }
-            if resultsView is ResultsGridView {
-                moveSelection(dx: 1, dy: 0); return true
-            }
-            return false
-        }
+        // Horizontal arrows belong to the field editor — full stop. The
+        // overwhelmingly common path is type-a-few-letters → first result
+        // is auto-selected → Enter; users almost never reach for the
+        // arrow keys to pick the second item, let alone walk a grid.
+        // Anyone who *does* want to step sideways through tiles uses
+        // Tab / Shift+Tab, which already work in both renderers. Keeping
+        // text editing whole is the higher-value choice.
         return false
-    }
-
-    /// True when the caret (or selection's leading edge) is anywhere
-    /// past position 0. In that case the next Left should move the
-    /// caret rather than the grid selection.
-    private func caretCanStillMoveLeft(in textView: NSTextView) -> Bool {
-        let range = textView.selectedRange()
-        // Active selection — Left collapses it to the start, that's a
-        // text operation we shouldn't steal.
-        if range.length > 0 { return true }
-        return range.location > 0
-    }
-
-    /// True when the caret (or selection's trailing edge) is anywhere
-    /// before the end of the string. In that case the next Right
-    /// should move the caret rather than the grid selection.
-    private func caretCanStillMoveRight(in textView: NSTextView) -> Bool {
-        let range = textView.selectedRange()
-        if range.length > 0 { return true }
-        let length = (textView.string as NSString).length
-        return range.location < length
     }
 }
