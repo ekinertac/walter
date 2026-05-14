@@ -464,16 +464,12 @@ extension LauncherPanelController: NSTextFieldDelegate {
         if commandSelector == #selector(NSResponder.moveUp(_:)) {
             moveSelection(dx: 0, dy: -1); return true
         }
-        // Only intercept horizontal arrows when in grid mode — otherwise
-        // they'd hijack text-cursor motion in the search field.
-        if resultsView is ResultsGridView {
-            if commandSelector == #selector(NSResponder.moveLeft(_:)) {
-                moveSelection(dx: -1, dy: 0); return true
-            }
-            if commandSelector == #selector(NSResponder.moveRight(_:)) {
-                moveSelection(dx: 1, dy: 0); return true
-            }
-        }
+        // Horizontal arrows are deliberately NOT intercepted. The search
+        // field is the user's primary text input — they expect Left/Right
+        // (and Cmd+Left/Right for line jumps, Option+Left/Right for word
+        // jumps) to behave like any other macOS text input. In grid mode
+        // the cost is mild: Tab/Shift+Tab still walk the tiles in
+        // reading order, and Up/Down still move by row.
         return false
     }
 }
