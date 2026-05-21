@@ -60,6 +60,13 @@ class LauncherEngine {
         fileIndex = FileIndex(dirs: config.search.fileDirs, onChange: onIndexChanged)
     }
 
+    /// Forwards a refresh request to the underlying app index. The
+    /// panel controller calls this on every show so a freshly-installed
+    /// app appears immediately even when FSEvents missed the install.
+    func refreshIndexes() {
+        appIndex.refresh()
+    }
+
     func search(query: String) -> [SearchResult] {
         let q = query.trimmingCharacters(in: .whitespaces)
         if q.isEmpty { return [] }

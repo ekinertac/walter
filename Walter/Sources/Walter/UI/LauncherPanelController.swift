@@ -181,6 +181,12 @@ class LauncherPanelController: NSObject {
         if frontmost?.bundleIdentifier != Bundle.main.bundleIdentifier {
             previousApp = frontmost
         }
+        // Re-scan the app index every time the launcher opens. FSEvents
+        // usually keeps it current, but agent-app suspension can let a
+        // freshly-installed app slip past until something else triggers
+        // a rebuild. Doing it here means "I just installed this app, why
+        // doesn't Walter see it" can be answered with "open Walter".
+        launcher.refreshIndexes()
         restoreOrCenterPosition()
         // Sync background layer size
         backgroundLayer.frame = panel.contentView?.bounds ?? .zero
@@ -464,13 +470,40 @@ extension LauncherPanelController: NSTextFieldDelegate {
         if commandSelector == #selector(NSResponder.moveUp(_:)) {
             moveSelection(dx: 0, dy: -1); return true
         }
-        // Horizontal arrows belong to the field editor — full stop. The
-        // overwhelmingly common path is type-a-few-letters → first result
-        // is auto-selected → Enter; users almost never reach for the
-        // arrow keys to pick the second item, let alone walk a grid.
-        // Anyone who *does* want to step sideways through tiles uses
-        // Tab / Shift+Tab, which already work in both renderers. Keeping
-        // text editing whole is the higher-value choice.
+        // Only intercept horizontal arrows when in grid mode AND a tile
+        // is currently selected. Banner rows (calculator answers,
+        // conversions, the trailing web search) are full-width singletons
+        // — horizontal motion is meaningless there, and the user almost
+        // certainly wants the keys to move the text cursor inside their
+        // expression (e.g. editing the `*` in `12*7+3`). Letting the
+        // field editor handle them in that state restores normal
+        // text-editing behavior without giving up 2-D tile navigation
+        // when the user is actually picking tiles.
+        if resultsView is ResultsGridView, isTileSelected() {
+            if commandSelector == #selector(NSResponder.moveLeft(_:)) {
+                moveSelection(dx: -1, dy: 0); return true
+            }
+            if commandSelector == #selector(NSResponder.moveRight(_:)) {
+                moveSelection(dx: 1, dy: 0); return true
+            }
+        }
         return false
+    }
+
+    /// True when the currently-selected result is a grid tile rather than
+    /// a banner row. Banners are emitted with a `.copy` action (calc /
+    /// conversion answers) or as the `.url` web-search fallback whose
+    /// title starts with "Search ". Everything else lives in the tile
+    /// area and supports 2-D navigation.
+    private func isTileSelected() -> Bool {
+        guard let result = resultsView.result(at: selectedIndex) else { return false }
+        switch result.action {
+        case .copy:
+            return false
+        case .url:
+            return !result.title.hasPrefix("Search ")
+        default:
+            return true
+        }
     }
 }

@@ -349,6 +349,17 @@ class AppIndex {
             self?.onChange()
         }
     }
+
+    /// Safety-net refresh, called when the launcher window is opened.
+    /// FSEvents should normally keep the index current, but agent-app
+    /// suspension (LSUIElement=true), bursty installers, and queue
+    /// coalescing can occasionally let a freshly-installed app slip
+    /// past until the next event. Re-scanning on every panel show
+    /// hides those edge cases without measurable cost (~50ms for a
+    /// typical macOS install).
+    func refresh() {
+        rebuildIndex()
+    }
 }
 
 // FSEvents C callback — bridges to the Swift instance via the context pointer.
