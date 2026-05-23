@@ -266,6 +266,23 @@ class AppIndex {
         }
 
         let info = bundle.infoDictionary ?? [:]
+
+        // An app declares its icon one of several ways, and any of them
+        // marks it as a real, user-facing app rather than a headless agent:
+        //   * CFBundleIconName   — asset-catalog icon, how every modern
+        //                          Xcode-built app ships (no top-level .icns)
+        //   * CFBundleIcons / CFBundleIcons~ipad — iOS-on-Mac App Store apps
+        //                          (e.g. Tapo), whose bundle is wrapped and
+        //                          has no Contents/Resources/*.icns at all
+        //   * CFBundleIconFile   — classic .icns reference (checked below)
+        // Without this branch, asset-catalog apps and every iOS-on-Mac app
+        // were misclassified as agents and silently dropped from the index.
+        if info["CFBundleIconName"] != nil ||
+           info["CFBundleIcons"] != nil ||
+           info["CFBundleIcons~ipad"] != nil {
+            return false
+        }
+
         guard let iconRef = info["CFBundleIconFile"] as? String, !iconRef.isEmpty else {
             return true
         }
