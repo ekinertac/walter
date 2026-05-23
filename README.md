@@ -171,6 +171,10 @@ dist/
   Walter.entitlements Hardened runtime entitlements
 ```
 
+## Changelog
+
+See [CHANGELOG.md](CHANGELOG.md) for the version history.
+
 ## Contributing
 
 Walter stays small on purpose. PRs that fix bugs, sharpen what's already
