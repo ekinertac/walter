@@ -5,6 +5,47 @@ All notable changes to Walter are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.5.3] — 2026-06-01
+
+### Added
+- **Extended theme palette.** Four optional color keys —
+  `selection`, `subtitle`, `border`, and `placeholder_color` — and a
+  `font_weight` key for result titles. All optional; defaults derive
+  from the existing core colors so existing themes look identical.
+  Works in `[theme]`, in user `.theme` files, and in the live theme
+  preview.
+- **Cmd+Enter → Reveal in Finder** for apps and file-search results
+  (Alfred convention). Falls back to the normal action for URLs,
+  calculator answers, and system commands.
+- **Cmd+1 … Cmd+9 → quick-launch the Nth visible result.** A dim `⌘N`
+  hint is drawn on the first nine rows / tiles so the shortcut is
+  discoverable.
+- **Cmd+C → copy the selected result's value** to the clipboard —
+  file/app path, alias URL, shell command, or computed answer. When
+  there's an active text selection in the search field, Walter
+  defers to normal text copy so typing isn't disrupted.
+
+### Fixed
+- **Apps nested in `/Applications` subfolders are now indexed.**
+  `/Applications/Setapp/<app>.app`,
+  `/Applications/Adobe Photoshop 2024/Adobe Photoshop 2024.app`, and
+  similar vendor-folder installs were silently invisible because
+  `/Applications` was scanned non-recursively. Recursion is safe —
+  `.app` bundles remain opaque leaves and bundle-ID dedup collapses
+  overlap with the explicit `Applications/Utilities` entry.
+- **Smart-quoted config values now parse.** Editors with smart-quote
+  substitution (CotEditor, TextEdit, …) silently turn `"grid"` into
+  `“grid”`, which previously never matched anything. The parser now
+  treats curly double quotes as straight ones.
+- **Placeholder text no longer shrinks** when a theme is loaded. The
+  earlier switch to `placeholderAttributedString` (so the placeholder
+  could carry a theme color) dropped the font attribute; it now
+  carries the search field's font explicitly.
+- **Cmd+Enter no longer beeps.** AppKit routes Cmd-modified keys as
+  key-equivalents *before* the field editor's command interpretation;
+  `KeyablePanel.performKeyEquivalent` now intercepts them so they're
+  never unhandled.
+
 ## [1.5.2] — 2026-05-24
 
 ### Fixed
@@ -123,6 +164,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Menu bar agent, launch-at-login, scalable UI, frosted-glass blur,
   hot-reloaded TOML config.
 
+[1.5.3]: https://github.com/ekinertac/walter/releases/tag/v1.5.3
 [1.5.2]: https://github.com/ekinertac/walter/releases/tag/v1.5.2
 [1.5.1]: https://github.com/ekinertac/walter/releases/tag/v1.5.1
 [1.5.0]: https://github.com/ekinertac/walter/releases/tag/v1.5.0

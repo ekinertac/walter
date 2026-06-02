@@ -10,6 +10,12 @@ struct ThemePreset {
     let background: String
     let foreground: String
     let accent: String
+    // Optional palette extensions. Built-in presets leave these nil and
+    // let the UI derive selection/subtitle/border from the core three.
+    // User `.theme` files may set them explicitly.
+    var selection: String? = nil
+    var subtitle: String? = nil
+    var border: String? = nil
 }
 
 let builtinThemes: [String: ThemePreset] = [

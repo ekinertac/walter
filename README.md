@@ -142,6 +142,11 @@ url  = "https://www.youtube.com/results?search_query={query}"
 | Open/close launcher | Alt+Space (configurable) |
 | Navigate results | Tab / Shift+Tab / Arrow keys |
 | Launch / copy result | Enter |
+| Reveal in Finder | Cmd+Enter (apps and file-search results) |
+| Jump to Nth result | Cmd+1 … Cmd+9 (hint shown on each row) |
+| Copy result value | Cmd+C (file/app path, URL, computed answer; defers to text copy when text is selected) |
+| Paste into search | Cmd+V |
+| File search | Type `` ` `` then a filename (prefix configurable) |
 | Close | Escape |
 | Open config | Cmd+, |
 | Change theme | Type "theme", browse with arrows, Enter to confirm, Esc to revert |

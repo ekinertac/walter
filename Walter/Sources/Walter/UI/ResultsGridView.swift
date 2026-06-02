@@ -158,10 +158,10 @@ class ResultsGridView: NSView, ResultsView {
         scrollToView(forIndex: selectedIndex)
     }
 
-    func updateColors(foreground: NSColor, accent: NSColor) {
+    func updateColors(foreground: NSColor, accent: NSColor, selection: NSColor, subtitle: NSColor) {
         for (view, _) in rowViews {
-            (view as? ResultRowView)?.updateColors(foreground: foreground, accent: accent)
-            (view as? ResultTileView)?.updateColors(foreground: foreground, accent: accent)
+            (view as? ResultRowView)?.updateColors(foreground: foreground, accent: accent, selection: selection, subtitle: subtitle)
+            (view as? ResultTileView)?.updateColors(foreground: foreground, accent: accent, selection: selection)
         }
     }
 
@@ -325,7 +325,11 @@ class ResultsGridView: NSView, ResultsView {
         for (visualPos, index) in tileIndices.enumerated() {
             let row = visualPos / columns
             let col = visualPos % columns
-            let tileView = ResultTileView(result: results[index], config: config)
+            // Cmd+N maps to the flat result index, so the badge uses that
+            // (not the tile's visual position) to stay correct when top
+            // banners shift the numbering.
+            let shortcut = index < 9 ? index + 1 : nil
+            let tileView = ResultTileView(result: results[index], config: config, shortcutNumber: shortcut)
             tileView.onClick = { [weak self] in self?.onRowClicked?(index) }
             tileView.frame = NSRect(
                 x: sideInset + CGFloat(col) * tile.width,
@@ -402,9 +406,10 @@ class ResultTileView: NSView {
 
     private let iconView = NSImageView()
     private let titleLabel = NSTextField(labelWithString: "")
+    private let shortcutLabel = NSTextField(labelWithString: "")
     private let highlight = CALayer()
 
-    init(result: SearchResult, config: ConfigManager) {
+    init(result: SearchResult, config: ConfigManager, shortcutNumber: Int? = nil) {
         super.init(frame: .zero)
         wantsLayer = true
 
@@ -422,21 +427,36 @@ class ResultTileView: NSView {
         iconView.imageScaling = .scaleProportionallyUpOrDown
         iconView.translatesAutoresizingMaskIntoConstraints = false
 
-        titleLabel.font = LauncherPanelController.resolveFont(name: config.theme.font, size: config.s(13), weight: .medium)
+        let titleWeight = LauncherPanelController.fontWeight(from: config.theme.fontWeight)
+        titleLabel.font = LauncherPanelController.resolveFont(name: config.theme.font, size: config.s(13), weight: titleWeight)
         titleLabel.textColor = .labelColor
         titleLabel.lineBreakMode = .byTruncatingTail
         titleLabel.alignment = .center
         titleLabel.translatesAutoresizingMaskIntoConstraints = false
         titleLabel.stringValue = result.title
 
+        // "⌘N" quick-launch hint, top-trailing corner, dimmed. Only on the
+        // first nine tiles.
+        shortcutLabel.font = LauncherPanelController.resolveFont(name: config.theme.font, size: config.s(10), weight: .regular)
+        shortcutLabel.textColor = .tertiaryLabelColor
+        shortcutLabel.alignment = .right
+        shortcutLabel.translatesAutoresizingMaskIntoConstraints = false
+        if let n = shortcutNumber {
+            shortcutLabel.stringValue = "⌘\(n)"
+        }
+
         addSubview(iconView)
         addSubview(titleLabel)
+        addSubview(shortcutLabel)
 
         NSLayoutConstraint.activate([
             iconView.topAnchor.constraint(equalTo: topAnchor, constant: config.s(10)),
             iconView.centerXAnchor.constraint(equalTo: centerXAnchor),
             iconView.widthAnchor.constraint(equalToConstant: iconSize),
             iconView.heightAnchor.constraint(equalToConstant: iconSize),
+
+            shortcutLabel.topAnchor.constraint(equalTo: topAnchor, constant: config.s(4)),
+            shortcutLabel.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -config.s(6)),
 
             titleLabel.topAnchor.constraint(equalTo: iconView.bottomAnchor, constant: config.s(6)),
             titleLabel.leadingAnchor.constraint(equalTo: leadingAnchor, constant: config.s(4)),
@@ -447,6 +467,9 @@ class ResultTileView: NSView {
     required init?(coder: NSCoder) { fatalError() }
 
     private var accentColor: NSColor = .controlAccentColor
+    // Tile selection fill. Defaults to accent @ 0.25 until the theme
+    // supplies an explicit selection color.
+    private var selectionFill: NSColor = NSColor.controlAccentColor.withAlphaComponent(0.25)
 
     override func layout() {
         super.layout()
@@ -455,16 +478,14 @@ class ResultTileView: NSView {
     }
 
     func setSelected(_ selected: Bool) {
-        if selected {
-            highlight.backgroundColor = accentColor.withAlphaComponent(0.25).cgColor
-        } else {
-            highlight.backgroundColor = nil
-        }
+        highlight.backgroundColor = selected ? selectionFill.cgColor : nil
     }
 
-    func updateColors(foreground: NSColor, accent: NSColor) {
+    func updateColors(foreground: NSColor, accent: NSColor, selection: NSColor) {
         titleLabel.textColor = foreground
+        shortcutLabel.textColor = foreground.withAlphaComponent(0.45)
         accentColor = accent
+        selectionFill = selection
     }
 
     override func updateTrackingAreas() {
@@ -488,7 +509,8 @@ class ResultTileView: NSView {
     }
 
     override func mouseExited(with event: NSEvent) {
-        if highlight.backgroundColor != accentColor.withAlphaComponent(0.25).cgColor {
+        // Preserve the selection fill; only clear a transient hover tint.
+        if highlight.backgroundColor != selectionFill.cgColor {
             highlight.backgroundColor = nil
         }
     }

@@ -52,11 +52,20 @@ class AppIndex {
         ]
     }()
 
-    /// Dirs that should be scanned recursively (user-level app folders
-    /// may have subfolders like ~/Applications/Setapp/).
+    /// Dirs scanned recursively. Vendor-installed apps routinely nest one
+    /// level deep — `/Applications/Setapp/<app>.app`,
+    /// `/Applications/Adobe Photoshop 2024/Adobe Photoshop 2024.app`,
+    /// `/Applications/Microsoft Office/<app>.app`, etc. — so a flat scan
+    /// of `/Applications` misses them entirely. The `findApps` walker
+    /// treats `.app` bundles as opaque leaves, so recursion can't fall
+    /// into a bundle's internals; bundle-ID dedup collapses any overlap
+    /// with the explicit `Applications/Utilities` entry.
     private static let recursiveDirs: Set<String> = {
         let home = FileManager.default.homeDirectoryForCurrentUser.path
-        return ["\(home)/Applications"]
+        return [
+            "/Applications",
+            "\(home)/Applications",
+        ]
     }()
 
     /// Full list of indexed apps — used by LauncherEngine for fuzzy matching.

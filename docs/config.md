@@ -16,16 +16,25 @@ This document covers every setting Walter understands. Each section maps
 
 Visual styling of the launcher window.
 
-| Key             | Type   | Default       | Notes |
-| --------------- | ------ | ------------- | ----- |
-| `name`          | string | unset         | Built-in or user theme name. When set, overrides `background` / `foreground` / `accent`. |
-| `background`    | hex    | `"#1e1e2e"`   | CSS-style. `"#00000000"` = transparent (system vibrancy only). |
-| `foreground`    | hex    | `"#cdd6f4"`   | Text color. |
-| `accent`        | hex    | `"#cba6f7"`   | Selection highlight + accent fills. |
-| `border_radius` | int    | `12`          | Window corner radius in px. |
-| `font`          | string | `"SF Pro"`    | Any installed font, or `"system"`. |
-| `font_size`     | int    | `14`          | Search input font size at scale 1.0. |
-| `blur_material` | string | `"hudWindow"` | One of `hudWindow`, `sidebar`, `popover`, `sheet`, `dark`, `light`. |
+| Key                 | Type   | Default       | Notes |
+| ------------------- | ------ | ------------- | ----- |
+| `name`              | string | unset         | Built-in or user theme name. When set, overrides `background` / `foreground` / `accent`. |
+| `background`        | hex    | `"#1e1e2e"`   | CSS-style. `"#00000000"` = transparent (system vibrancy only). |
+| `foreground`        | hex    | `"#cdd6f4"`   | Primary text color. |
+| `accent`            | hex    | `"#cba6f7"`   | Accent fills; default source for the selection highlight. |
+| `selection`         | hex    | unset         | Selection highlight fill. Defaults to `accent` at 25% opacity. |
+| `subtitle`          | hex    | unset         | Subtitle / secondary text. Defaults to `foreground` at 60% opacity. |
+| `border`            | hex    | unset         | Hairline window border. Off when unset. |
+| `placeholder_color` | hex    | unset         | Search-field placeholder text. Defaults to `foreground` at 50% opacity. |
+| `border_radius`     | int    | `12`          | Window corner radius in px. |
+| `font`              | string | `"SF Pro"`    | Any installed font, or `"system"`. |
+| `font_size`         | int    | `14`          | Search input font size at scale 1.0. |
+| `font_weight`       | string | `"medium"`    | Result-title weight: `light`, `regular`, `medium`, `semibold`, `bold`. |
+| `blur_material`     | string | `"hudWindow"` | One of `hudWindow`, `sidebar`, `popover`, `sheet`, `dark`, `light`. |
+
+The optional `selection`, `subtitle`, `border`, and `placeholder_color`
+keys all derive sensible values from the core three colors when omitted,
+so existing themes render identically without specifying them.
 
 ### Built-in theme presets
 
@@ -49,9 +58,14 @@ filename (without extension) becomes the theme name. Format:
 background  #0a0a23
 foreground  #00ffff
 accent      #ff00ff
+# optional — derive from the above when omitted:
+selection   #1a1a44
+subtitle    #6699aa
+border      #00ffff
 ```
 
-Three keys, whitespace-separated, `#` comments, `bg` / `fg` aliases work.
+Core three keys are required; `selection` / `subtitle` / `border` are
+optional. Whitespace-separated, `#` comments, `bg` / `fg` aliases work.
 Saving any file in the themes directory triggers a hot-reload. Reference
 your custom theme from `[theme]` like a built-in: `name = "my-cyberpunk"`.
 
@@ -110,6 +124,23 @@ The global hotkey requires Accessibility access — Walter prompts on
 first launch. Grant it under **System Settings → Privacy & Security →
 Accessibility**. Without it the hotkey leaks the underlying key into
 the active app instead of triggering Walter.
+
+### In-launcher keys (fixed)
+
+Beyond the configurable `open` / `close` hotkeys, these keys are fixed
+while the launcher is open:
+
+| Key | Action |
+| --- | ------ |
+| `Enter` | Launch / open / copy the selected result |
+| `Cmd+Enter` | Reveal the selected result in Finder (apps and file-search hits; falls back to the normal action for everything else) |
+| `Cmd+1` … `Cmd+9` | Jump to and activate the Nth visible result (hint shown on each row) |
+| `Cmd+C` | Copy the selected result's value — file/app path, alias URL, shell command, or computed answer. When text is selected in the search field, defers to normal text copy. |
+| `Cmd+V` | Paste into the search field |
+| `Tab` / `Shift+Tab` | Next / previous result |
+| `↑` / `↓` | Move selection (list and grid) |
+| `←` / `→` | Move the text cursor; in grid mode, move between tiles when a tile is selected |
+| `Esc` | Close the launcher (or exit theme-preview / file mode) |
 
 ---
 

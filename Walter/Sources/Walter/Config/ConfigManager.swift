@@ -12,9 +12,16 @@ class ConfigManager {
         var background: String = "#1e1e2e"
         var foreground: String = "#cdd6f4"
         var accent: String = "#cba6f7"
+        // Optional palette extensions. nil = derive from the core three
+        // colors exactly as before, so existing themes look identical.
+        var selection: String?                  // selection highlight; default accent @ 0.25
+        var subtitle: String?                   // subtitle text; default foreground @ 0.6
+        var border: String?                     // window edge; default none
+        var placeholderColor: String?           // search placeholder; default foreground @ 0.5
         var borderRadius: Float = 12.0
         var font: String = "SF Pro"
         var fontSize: Int = 14
+        var fontWeight: String = "medium"        // result title weight: light|regular|medium|semibold|bold
         var blurMaterial: String = "hudWindow"   // hudWindow | sidebar | popover | sheet | dark | light
     }
 
@@ -172,9 +179,17 @@ class ConfigManager {
 background    = "#1e1e2e"            # CSS-style hex; "#00000000" = transparent
 foreground    = "#cdd6f4"
 accent        = "#cba6f7"
+# Optional palette extensions — all derive from the three colors above
+# when unset, so leaving them out keeps the current look:
+# selection         = "#45475a"      # selection highlight  (default: accent @ 25%)
+# subtitle          = "#6c7086"      # subtitle text color  (default: foreground @ 60%)
+# border            = "#313244"      # window edge          (default: none)
+# placeholder_color = "#6c7086"      # search placeholder   (default: foreground @ 50%)
 border_radius = 12                   # window corner radius in px
 font          = "SF Pro"             # any installed font name, or "system"
 font_size     = 14
+# font_weight accepts: light | regular | medium | semibold | bold (result titles)
+font_weight   = "medium"
 # blur_material accepts: hudWindow | sidebar | popover | sheet | dark | light
 blur_material = "hudWindow"
 
@@ -356,6 +371,12 @@ file_dirs            = ~/Documents, ~/Desktop, ~/Downloads
             let key = parts[0].trimmingCharacters(in: .whitespaces)
             var raw = parts[1].trimmingCharacters(in: .whitespaces)
 
+            // Accept curly double quotes as well as straight ones. Editors
+            // with smart-quote substitution on (CotEditor, TextEdit, etc.)
+            // silently turn `"grid"` into `“grid”`, which would otherwise
+            // never match anything and look like a Walter bug.
+            let doubleQuotes: Set<Character> = ["\"", "\u{201C}", "\u{201D}"]
+
             // Strip inline comments. For quoted values the `#` itself may be
             // legal inside the string (e.g. hex colors), so we anchor on the
             // closing quote instead: everything after it is comment-territory
@@ -363,14 +384,14 @@ file_dirs            = ~/Documents, ~/Desktop, ~/Downloads
             //     mode = "grid" # grid|list
             // parses as `grid" # grid|list`, which silently mismatches every
             // mode comparison and looks like a bug at the call site.
-            if raw.hasPrefix("\"") {
-                if let closeIdx = raw.dropFirst().firstIndex(of: "\"") {
+            if let first = raw.first, doubleQuotes.contains(first) {
+                if let closeIdx = raw.dropFirst().firstIndex(where: { doubleQuotes.contains($0) }) {
                     raw = String(raw[...closeIdx])
                 }
             } else if let commentIdx = raw.firstIndex(of: "#") {
                 raw = String(raw[..<commentIdx]).trimmingCharacters(in: .whitespaces)
             }
-            let value = raw.trimmingCharacters(in: CharacterSet(charactersIn: "\""))
+            let value = raw.trimmingCharacters(in: CharacterSet(charactersIn: "\"\u{201C}\u{201D}"))
 
             switch (currentSection, key) {
             // Theme
@@ -378,9 +399,14 @@ file_dirs            = ~/Documents, ~/Desktop, ~/Downloads
             case ("theme", "background"):    theme.background = value
             case ("theme", "foreground"):    theme.foreground = value
             case ("theme", "accent"):        theme.accent = value
+            case ("theme", "selection"):     theme.selection = value
+            case ("theme", "subtitle"):      theme.subtitle = value
+            case ("theme", "border"):        theme.border = value
+            case ("theme", "placeholder_color"): theme.placeholderColor = value
             case ("theme", "border_radius"): theme.borderRadius = Float(value) ?? theme.borderRadius
             case ("theme", "font"):          theme.font = value
             case ("theme", "font_size"):     theme.fontSize = Int(value) ?? theme.fontSize
+            case ("theme", "font_weight"):   theme.fontWeight = value
             case ("theme", "blur_material"): theme.blurMaterial = value
             // Layout
             case ("layout", "width"):        layout.width = Int(value) ?? layout.width
@@ -443,11 +469,17 @@ file_dirs            = ~/Documents, ~/Desktop, ~/Downloads
 
         // Apply theme preset by name — built-in or user-defined under
         // ~/.config/walter/themes/. Individual colors below it are ignored.
+        // Optional palette colors from the preset only override when the
+        // preset actually specifies them; otherwise we leave whatever the
+        // user set in [theme] (or nil, to derive a default).
         if let themeName = theme.name?.lowercased(),
            let preset = allThemes[themeName] {
             theme.background = preset.background
             theme.foreground = preset.foreground
             theme.accent = preset.accent
+            if let s = preset.selection { theme.selection = s }
+            if let s = preset.subtitle { theme.subtitle = s }
+            if let b = preset.border { theme.border = b }
             print("Theme applied: \(themeName)")
         }
 

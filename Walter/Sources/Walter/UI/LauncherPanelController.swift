@@ -55,6 +55,11 @@ class LauncherPanelController: NSObject {
         vibrancyView.wantsLayer = true
         vibrancyView.layer?.cornerRadius = cornerRadius
         vibrancyView.layer?.masksToBounds = true
+        // Optional theme border. Hairline by default; off when unset.
+        if let border = config.theme.border, let c = NSColor(hex: border) {
+            vibrancyView.layer?.borderColor = c.cgColor
+            vibrancyView.layer?.borderWidth = 1
+        }
         vibrancyView.translatesAutoresizingMaskIntoConstraints = false
 
         // --- Search icon ---
@@ -69,9 +74,18 @@ class LauncherPanelController: NSObject {
 
         // --- Search field ---
         let fgColor = NSColor(hex: config.theme.foreground) ?? .labelColor
+        let placeholderColor = config.theme.placeholderColor.flatMap { NSColor(hex: $0) }
+            ?? fgColor.withAlphaComponent(0.5)
+        let searchFont = Self.resolveFont(name: config.theme.font, size: config.s(28), weight: .light)
         searchField = NSTextField()
-        searchField.placeholderString = config.layout.placeholder
-        searchField.font = Self.resolveFont(name: config.theme.font, size: config.s(28), weight: .light)
+        searchField.font = searchFont
+        // Attributed placeholder must carry the field's font explicitly —
+        // without it the placeholder reverts to the default system size
+        // (tiny) instead of matching the large search input.
+        searchField.placeholderAttributedString = NSAttributedString(
+            string: config.layout.placeholder,
+            attributes: [.foregroundColor: placeholderColor, .font: searchFont]
+        )
         searchField.isBezeled = false
         searchField.focusRingType = .none
         searchField.drawsBackground = false
@@ -156,6 +170,12 @@ class LauncherPanelController: NSObject {
         }
 
         searchField.delegate = self
+
+        // Cmd-shortcuts arrive as key-equivalents, not editing commands, so
+        // they're handled at the panel level rather than in doCommandBy:.
+        panel.onCommandReturn = { [weak self] in self?.revealSelectionInFinder() }
+        panel.onQuickSelect = { [weak self] n in self?.quickSelect(n) }
+        panel.onCopyResult = { [weak self] in self?.copySelectionValue() ?? false }
 
         NotificationCenter.default.addObserver(
             self,
@@ -283,8 +303,38 @@ class LauncherPanelController: NSObject {
         }
         selectedIndex = 0
         resultsView.update(results: results, selectedIndex: selectedIndex)
+        // Rows are rebuilt fresh on every update and reset to system label
+        // colors, so re-apply the configured theme palette each time.
+        applyResultColors()
         resizePanelToFit(resultCount: results.count, results: results)
         separator.isHidden = results.isEmpty
+    }
+
+    /// Resolves the configured theme palette (with fallbacks for the
+    /// optional selection/subtitle colors) and pushes it to the results
+    /// view. Centralizes the fallback logic so list and grid renderers and
+    /// the live theme preview all agree on what "selection" / "subtitle"
+    /// mean when the theme doesn't specify them.
+    private func applyResultColors() {
+        let c = Self.resolvePalette(
+            foreground: config.theme.foreground,
+            accent: config.theme.accent,
+            selection: config.theme.selection,
+            subtitle: config.theme.subtitle
+        )
+        resultsView.updateColors(foreground: c.fg, accent: c.accent, selection: c.selection, subtitle: c.subtitle)
+    }
+
+    /// Resolves a palette from hex strings, deriving the optional colors
+    /// from the core ones when unset: selection = accent @ 0.25,
+    /// subtitle = foreground @ 0.6.
+    static func resolvePalette(foreground: String, accent: String, selection: String?, subtitle: String?)
+        -> (fg: NSColor, accent: NSColor, selection: NSColor, subtitle: NSColor) {
+        let fg = NSColor(hex: foreground) ?? .labelColor
+        let ac = NSColor(hex: accent) ?? .controlAccentColor
+        let sel = selection.flatMap { NSColor(hex: $0) } ?? ac.withAlphaComponent(0.25)
+        let sub = subtitle.flatMap { NSColor(hex: $0) } ?? fg.withAlphaComponent(0.6)
+        return (fg, ac, sel, sub)
     }
 
     private func resizePanelToFit(resultCount: Int, results: [SearchResult]) {
@@ -326,6 +376,20 @@ class LauncherPanelController: NSObject {
         notifyPreviewIfNeeded()
     }
 
+    /// Sets the search-field placeholder honoring the theme's placeholder
+    /// color (falls back to foreground @ 0.5). Used everywhere the
+    /// placeholder text changes so the color never silently reverts.
+    private func setPlaceholder(_ text: String) {
+        let color = config.theme.placeholderColor.flatMap { NSColor(hex: $0) }
+            ?? (NSColor(hex: config.theme.foreground) ?? .labelColor).withAlphaComponent(0.5)
+        // Reuse the field's own font so the placeholder matches the large
+        // input size; an attributed string without an explicit font would
+        // shrink to the default system size.
+        var attrs: [NSAttributedString.Key: Any] = [.foregroundColor: color]
+        if let font = searchField.font { attrs[.font] = font }
+        searchField.placeholderAttributedString = NSAttributedString(string: text, attributes: attrs)
+    }
+
     private func notifyPreviewIfNeeded() {
         if isThemePicker, let result = resultsView.result(at: selectedIndex),
            case .applyTheme(let name) = result.action {
@@ -341,11 +405,17 @@ class LauncherPanelController: NSObject {
         suppressConfigRebuild = true
         launcher.applyTheme(name: name)
 
-        guard let preset = builtinThemes[name] else { return }
+        // Look up across built-in AND user themes so previewing a custom
+        // theme also picks up its optional selection/subtitle colors.
+        guard let preset = config.allThemes[name] else { return }
 
         let bg = NSColor(hex: preset.background) ?? NSColor(white: 0.1, alpha: 1)
-        let fg = NSColor(hex: preset.foreground) ?? .labelColor
-        let accent = NSColor(hex: preset.accent) ?? .controlAccentColor
+        let palette = Self.resolvePalette(
+            foreground: preset.foreground,
+            accent: preset.accent,
+            selection: preset.selection,
+            subtitle: preset.subtitle
+        )
 
         // Background — transparent bg means "system vibrancy only" (Spotlight look)
         CATransaction.begin()
@@ -357,14 +427,19 @@ class LauncherPanelController: NSObject {
         }
         CATransaction.commit()
 
-        // Search field
-        searchField.textColor = fg
+        searchField.textColor = palette.fg
+        searchIcon.contentTintColor = palette.fg.withAlphaComponent(0.5)
 
-        // Search icon
-        searchIcon.contentTintColor = fg.withAlphaComponent(0.5)
+        // Border follows the previewed theme (off when it doesn't set one).
+        if let border = preset.border, let c = NSColor(hex: border) {
+            vibrancyView.layer?.borderColor = c.cgColor
+            vibrancyView.layer?.borderWidth = 1
+        } else {
+            vibrancyView.layer?.borderWidth = 0
+        }
 
-        // Result rows
-        resultsView.updateColors(foreground: fg, accent: accent)
+        resultsView.updateColors(foreground: palette.fg, accent: palette.accent,
+                                 selection: palette.selection, subtitle: palette.subtitle)
     }
 
     /// Resolves a font by name from config. Falls back to system font if not found.
@@ -389,6 +464,23 @@ class LauncherPanelController: NSObject {
         return .systemFont(ofSize: size, weight: weight)
     }
 
+    /// Maps a `font_weight` config string to an NSFont.Weight. Unknown
+    /// values fall back to .medium (the historical result-title weight).
+    static func fontWeight(from name: String) -> NSFont.Weight {
+        switch name.lowercased() {
+        case "ultralight":      return .ultraLight
+        case "thin":            return .thin
+        case "light":           return .light
+        case "regular", "normal": return .regular
+        case "medium":          return .medium
+        case "semibold":        return .semibold
+        case "bold":            return .bold
+        case "heavy":           return .heavy
+        case "black":           return .black
+        default:                return .medium
+        }
+    }
+
     private static func blurMaterial(from name: String) -> NSVisualEffectView.Material {
         switch name.lowercased() {
         case "sidebar":    return .sidebar
@@ -406,7 +498,7 @@ class LauncherPanelController: NSObject {
             themeBeforePicker = config.theme.name
             isThemePicker = true
             searchField.stringValue = ""
-            searchField.placeholderString = "Filter themes..."
+            setPlaceholder("Filter themes...")
             updateResults(query: "")
             if let first = resultsView.result(at: 0), case .applyTheme(let name) = first.action {
                 previewTheme(name)
@@ -418,7 +510,7 @@ class LauncherPanelController: NSObject {
             suppressConfigRebuild = false
             themeBeforePicker = nil
             isThemePicker = false
-            searchField.placeholderString = config.layout.placeholder
+            setPlaceholder(config.layout.placeholder)
             hide()
             return
 
@@ -428,6 +520,59 @@ class LauncherPanelController: NSObject {
             hide()
             DispatchQueue.main.async { self.launcher.launch(result: result) }
         }
+    }
+
+    /// Cmd+1…9 — jump to and launch the Nth visible result. No-op when
+    /// fewer than N results are showing.
+    private func quickSelect(_ n: Int) {
+        let idx = n - 1
+        guard idx >= 0, idx < resultsView.resultCount else { return }
+        selectedIndex = idx
+        resultsView.update(selectedIndex: idx)
+        confirmSelection()
+    }
+
+    /// Cmd+C — copy the selected result's underlying value to the
+    /// clipboard: file/app path, alias URL, shell command, or computed
+    /// answer. Returns true if something was copied. The launcher hides
+    /// afterward, matching the feel of completing an action.
+    private func copySelectionValue() -> Bool {
+        guard let result = resultsView.result(at: selectedIndex) else { return false }
+        let text: String?
+        switch result.action {
+        case .open(let p):         text = p
+        case .openInEditor(let p): text = p
+        case .url(let u):          text = u
+        case .copy(let v):         text = v
+        case .shell(let c):        text = c
+        case .systemCommand, .enterThemePicker, .applyTheme: text = nil
+        }
+        guard let text, !text.isEmpty else { return false }
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.setString(text, forType: .string)
+        hide()
+        return true
+    }
+
+    /// Reveals the selected result in Finder (Cmd+Return). Only results
+    /// backed by a filesystem path — apps and file-search hits — can be
+    /// revealed; for anything else (URLs, calculator answers, system
+    /// commands) we fall back to the normal action so the keystroke is
+    /// never a dead no-op.
+    private func revealSelectionInFinder() {
+        guard let result = resultsView.result(at: selectedIndex) else { return }
+        let path: String?
+        switch result.action {
+        case .open(let p):         path = p
+        case .openInEditor(let p): path = p
+        default:                   path = nil
+        }
+        guard let path else {
+            confirmSelection()
+            return
+        }
+        hide()
+        NSWorkspace.shared.activateFileViewerSelecting([URL(fileURLWithPath: path)])
     }
 }
 
@@ -448,7 +593,7 @@ extension LauncherPanelController: NSTextFieldDelegate {
                 themeBeforePicker = nil
                 isThemePicker = false
                 searchField.stringValue = ""
-                searchField.placeholderString = config.layout.placeholder
+                setPlaceholder(config.layout.placeholder)
                 updateResults(query: "")
             } else {
                 hide()
@@ -456,6 +601,9 @@ extension LauncherPanelController: NSTextFieldDelegate {
             return true
         }
         if commandSelector == #selector(NSResponder.insertNewline(_:)) {
+            // Plain Return launches/opens. Cmd+Return (reveal in Finder) is
+            // handled in KeyablePanel.performKeyEquivalent — it never reaches
+            // here because AppKit routes Cmd-modified keys as key-equivalents.
             confirmSelection(); return true
         }
         if commandSelector == #selector(NSResponder.insertTab(_:)) {

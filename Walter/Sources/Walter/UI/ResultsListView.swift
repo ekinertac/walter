@@ -22,7 +22,7 @@ protocol ResultsView: NSView {
     func result(at index: Int) -> SearchResult?
     func update(results: [SearchResult], selectedIndex: Int)
     func update(selectedIndex: Int)
-    func updateColors(foreground: NSColor, accent: NSColor)
+    func updateColors(foreground: NSColor, accent: NSColor, selection: NSColor, subtitle: NSColor)
     /// Move selection by a 1-D step (list: prev/next; grid: prev/next tile in
     /// reading order). Returns the new selected index.
     func step(by delta: Int, from current: Int) -> Int
@@ -108,9 +108,9 @@ class ResultsListView: NSView, ResultsView {
     }
 
     /// Live-update colors on all rows (used during theme preview).
-    func updateColors(foreground: NSColor, accent: NSColor) {
+    func updateColors(foreground: NSColor, accent: NSColor, selection: NSColor, subtitle: NSColor) {
         for row in rowViews {
-            row.updateColors(foreground: foreground, accent: accent)
+            row.updateColors(foreground: foreground, accent: accent, selection: selection, subtitle: subtitle)
         }
     }
 
@@ -145,7 +145,10 @@ class ResultsListView: NSView, ResultsView {
         var yOffset = padding
 
         for (index, result) in visibleResults.enumerated() {
-            let row = ResultRowView(result: result, config: config)
+            // The first nine rows get a "⌘N" hint so the Cmd+1…9 quick-launch
+            // shortcuts are discoverable rather than hidden.
+            let shortcut = index < 9 ? index + 1 : nil
+            let row = ResultRowView(result: result, config: config, shortcutNumber: shortcut)
             row.onClick = { [weak self] in self?.onRowClicked?(index) }
             row.frame = NSRect(
                 x: sideInset,
@@ -185,8 +188,9 @@ class ResultRowView: NSView {
     private let iconView = NSImageView()
     private let titleLabel = NSTextField(labelWithString: "")
     private let subtitleLabel = NSTextField(labelWithString: "")
+    private let shortcutLabel = NSTextField(labelWithString: "")
 
-    init(result: SearchResult, config: ConfigManager) {
+    init(result: SearchResult, config: ConfigManager, shortcutNumber: Int? = nil) {
         super.init(frame: .zero)
         wantsLayer = true
         layer?.cornerRadius = config.s(10)
@@ -200,7 +204,8 @@ class ResultRowView: NSView {
         iconView.imageScaling = .scaleProportionallyUpOrDown
         iconView.translatesAutoresizingMaskIntoConstraints = false
 
-        titleLabel.font = LauncherPanelController.resolveFont(name: config.theme.font, size: config.s(15), weight: .medium)
+        let titleWeight = LauncherPanelController.fontWeight(from: config.theme.fontWeight)
+        titleLabel.font = LauncherPanelController.resolveFont(name: config.theme.font, size: config.s(15), weight: titleWeight)
         titleLabel.textColor = .labelColor
         titleLabel.lineBreakMode = .byTruncatingTail
 
@@ -208,12 +213,23 @@ class ResultRowView: NSView {
         subtitleLabel.textColor = .secondaryLabelColor
         subtitleLabel.lineBreakMode = .byTruncatingMiddle
 
+        // "⌘N" quick-launch hint, dimmed and right-aligned. Only present on
+        // the first nine rows; nil keeps the row exactly as it was.
+        shortcutLabel.font = LauncherPanelController.resolveFont(name: config.theme.font, size: config.s(12), weight: .regular)
+        shortcutLabel.textColor = .tertiaryLabelColor
+        shortcutLabel.alignment = .right
+        shortcutLabel.translatesAutoresizingMaskIntoConstraints = false
+        if let n = shortcutNumber {
+            shortcutLabel.stringValue = "⌘\(n)"
+        }
+
         titleLabel.translatesAutoresizingMaskIntoConstraints = false
         subtitleLabel.translatesAutoresizingMaskIntoConstraints = false
 
         addSubview(iconView)
         addSubview(titleLabel)
         addSubview(subtitleLabel)
+        addSubview(shortcutLabel)
 
         NSLayoutConstraint.activate([
             iconView.leadingAnchor.constraint(equalTo: leadingAnchor, constant: config.s(12)),
@@ -221,9 +237,12 @@ class ResultRowView: NSView {
             iconView.widthAnchor.constraint(equalToConstant: iconSize),
             iconView.heightAnchor.constraint(equalToConstant: iconSize),
 
+            shortcutLabel.centerYAnchor.constraint(equalTo: centerYAnchor),
+            shortcutLabel.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -config.s(16)),
+
             titleLabel.topAnchor.constraint(equalTo: topAnchor, constant: config.s(10)),
             titleLabel.leadingAnchor.constraint(equalTo: iconView.trailingAnchor, constant: config.s(14)),
-            titleLabel.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -config.s(16)),
+            titleLabel.trailingAnchor.constraint(equalTo: shortcutLabel.leadingAnchor, constant: -config.s(8)),
 
             subtitleLabel.topAnchor.constraint(equalTo: titleLabel.bottomAnchor, constant: config.s(2)),
             subtitleLabel.leadingAnchor.constraint(equalTo: titleLabel.leadingAnchor),
@@ -237,19 +256,21 @@ class ResultRowView: NSView {
     required init?(coder: NSCoder) { fatalError() }
 
     private var accentColor: NSColor = .controlAccentColor
+    // Full-opacity selection fill. Defaults to accent @ 0.2 until the
+    // theme supplies an explicit selection color via updateColors.
+    private var selectionFill: NSColor = NSColor.controlAccentColor.withAlphaComponent(0.2)
 
     func setSelected(_ selected: Bool) {
-        if selected {
-            layer?.backgroundColor = accentColor.withAlphaComponent(0.2).cgColor
-        } else {
-            layer?.backgroundColor = nil
-        }
+        layer?.backgroundColor = selected ? selectionFill.cgColor : nil
     }
 
-    func updateColors(foreground: NSColor, accent: NSColor) {
+    func updateColors(foreground: NSColor, accent: NSColor, selection: NSColor, subtitle: NSColor) {
         titleLabel.textColor = foreground
-        subtitleLabel.textColor = foreground.withAlphaComponent(0.6)
+        subtitleLabel.textColor = subtitle
+        // Quick-launch hint sits a touch dimmer than the subtitle.
+        shortcutLabel.textColor = subtitle.withAlphaComponent(0.7)
         accentColor = accent
+        selectionFill = selection
     }
 
     override func updateTrackingAreas() {
@@ -273,7 +294,9 @@ class ResultRowView: NSView {
     }
 
     override func mouseExited(with event: NSEvent) {
-        if layer?.backgroundColor != NSColor.controlAccentColor.withAlphaComponent(0.2).cgColor {
+        // Only clear the hover tint — never the selection fill, which uses
+        // the (possibly theme-customized) selectionFill color.
+        if layer?.backgroundColor != selectionFill.cgColor {
             layer?.backgroundColor = nil
         }
     }

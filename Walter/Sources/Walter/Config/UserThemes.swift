@@ -52,6 +52,7 @@ private func parseThemeFile(at url: URL) -> ThemePreset? {
     guard let content = try? String(contentsOf: url, encoding: .utf8) else { return nil }
 
     var bg: String?, fg: String?, accent: String?
+    var selection: String?, subtitle: String?, border: String?
 
     for rawLine in content.components(separatedBy: .newlines) {
         // Strip everything after `#` — comments.
@@ -72,10 +73,14 @@ private func parseThemeFile(at url: URL) -> ThemePreset? {
         case "background", "bg":      bg = value
         case "foreground", "fg":      fg = value
         case "accent":                accent = value
+        case "selection":             selection = value
+        case "subtitle":              subtitle = value
+        case "border":                border = value
         default: break
         }
     }
 
     guard let bg, let fg, let accent else { return nil }
-    return ThemePreset(background: bg, foreground: fg, accent: accent)
+    return ThemePreset(background: bg, foreground: fg, accent: accent,
+                       selection: selection, subtitle: subtitle, border: border)
 }
