@@ -30,9 +30,23 @@ It boots in tens of milliseconds, draws with native AppKit, and reloads its conf
 ## What Walter is not
 
 - **Not a platform.** No plugin marketplace, no extension API, no third-party JS sandbox to keep up with. The whole codebase is ~3,000 lines of Swift you can read in an afternoon.
-- **Not Electron.** No Chromium runtime, no Node bundle, no 200 MB DMG. The release build is around **8 MB**.
+- **Not Electron.** No Chromium runtime, no Node bundle, no 200 MB DMG. The release build is around **4.3 MB**.
 - **Not a SaaS.** Nothing phones home. Nothing requires an account. AI chat, snippet libraries, clipboard managers, window tilers — those belong in dedicated apps you already trust. Walter doesn't try to absorb them.
 - **Not opinionated about your editor, search engine, browser, or theme.** Every one of those is a config knob.
+
+## How Walter compares
+
+|  | Walter | Raycast | Alfred | Spotlight |
+|---|---|---|---|---|
+| Price | Free | Free (VC-backed) | Free + paid Powerpack | Built-in |
+| Open source | ✅ MIT | ❌ | ❌ | ❌ |
+| Account required | None | Yes | None | None |
+| Telemetry | None | Yes | Minimal | Apple |
+| App size | ~4.3 MB | ~100 MB+ | tens of MB | built-in |
+| Plain-text config | ✅ TOML | ❌ GUI / cloud | ❌ GUI | ❌ |
+| Calculator / unit / currency | ✅ all three | ✅ | Powerpack | partial |
+
+Raycast wins on plugin breadth and built-in AI; Alfred is mature and beloved. Walter competes on footprint, openness, and not asking you to sign in. Full landing page and comparisons at **[walterlauncher.com](https://walterlauncher.com)**.
 
 ## Principles
 
