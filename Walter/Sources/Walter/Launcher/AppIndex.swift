@@ -37,7 +37,11 @@ struct AppEntry {
 
 class AppIndex {
 
-    /// Standard directories where .app bundles live on macOS.
+    /// Standard directories where .app bundles live on macOS, including
+    /// Homebrew's Caskroom and Cellar on both Apple Silicon and Intel
+    /// installs. Standard cask installs additionally symlink to
+    /// /Applications, so casks usually appear twice in the raw scan —
+    /// bundle-ID dedup in rebuildIndex collapses them down to one.
     private static let defaultDirs: [String] = {
         let home = FileManager.default.homeDirectoryForCurrentUser.path
         return [
@@ -49,6 +53,12 @@ class AppIndex {
             "/System/Library/CoreServices/Applications",
             "\(home)/Applications",
             "/Applications/MacPorts",
+            // Homebrew, Apple Silicon
+            "/opt/homebrew/Caskroom",
+            "/opt/homebrew/Cellar",
+            // Homebrew, Intel
+            "/usr/local/Caskroom",
+            "/usr/local/Cellar",
         ]
     }()
 
@@ -56,17 +66,36 @@ class AppIndex {
     /// level deep — `/Applications/Setapp/<app>.app`,
     /// `/Applications/Adobe Photoshop 2024/Adobe Photoshop 2024.app`,
     /// `/Applications/Microsoft Office/<app>.app`, etc. — so a flat scan
-    /// of `/Applications` misses them entirely. The `findApps` walker
-    /// treats `.app` bundles as opaque leaves, so recursion can't fall
-    /// into a bundle's internals; bundle-ID dedup collapses any overlap
-    /// with the explicit `Applications/Utilities` entry.
+    /// of `/Applications` misses them entirely. Homebrew nests at
+    /// `<root>/<formula-or-cask>/<version>/<App>.app`, so its Cellar and
+    /// Caskroom roots also need recursion. The `findApps` walker treats
+    /// `.app` bundles as opaque leaves, so recursion can't fall into a
+    /// bundle's internals; bundle-ID dedup collapses any overlap.
     private static let recursiveDirs: Set<String> = {
         let home = FileManager.default.homeDirectoryForCurrentUser.path
         return [
             "/Applications",
             "\(home)/Applications",
+            "/opt/homebrew/Caskroom",
+            "/opt/homebrew/Cellar",
+            "/usr/local/Caskroom",
+            "/usr/local/Cellar",
         ]
     }()
+
+    /// Per-root recursion depth cap. Most `recursiveDirs` are shallow
+    /// (`/Applications/<vendor>/<App>.app` lives at depth 1), but Homebrew's
+    /// Cellar mixes huge non-app trees (Python's stdlib, libexec, etc.)
+    /// alongside formula-bundled .app files at the formula+version level.
+    /// We need to descend 2 levels (`Cellar/<formula>/<version>/<App>.app`)
+    /// to find those — and then stop before walking into the formula's
+    /// install tree. Roots not listed here are walked without limit.
+    private static let recursionMaxDepth: [String: Int] = [
+        "/opt/homebrew/Cellar":   3,
+        "/usr/local/Cellar":      3,
+        "/opt/homebrew/Caskroom": 3,
+        "/usr/local/Caskroom":    3,
+    ]
 
     /// Full list of indexed apps — used by LauncherEngine for fuzzy matching.
     private(set) var allEntries: [AppEntry] = []
@@ -192,7 +221,8 @@ class AppIndex {
 
         for dir in allDirs {
             let recursive = Self.recursiveDirs.contains(dir) || extraDirs.contains(dir)
-            let apps = findApps(in: URL(fileURLWithPath: dir), recursive: recursive)
+            let maxDepth = Self.recursionMaxDepth[dir] ?? Int.max
+            let apps = findApps(in: URL(fileURLWithPath: dir), recursive: recursive, depth: 0, maxDepth: maxDepth)
 
             for url in apps {
                 let path = url.path
@@ -234,7 +264,7 @@ class AppIndex {
     /// option enabled, `Safari.app -> ../System/Cryptexes/...` is silently
     /// dropped from the listing and never makes it into the index.
     /// Filtering by `.app` extension is enough — dotfiles are uninteresting.
-    private func findApps(in directory: URL, recursive: Bool) -> [URL] {
+    private func findApps(in directory: URL, recursive: Bool, depth: Int = 0, maxDepth: Int = .max) -> [URL] {
         let fm = FileManager.default
         guard let contents = try? fm.contentsOfDirectory(
             at: directory,
@@ -243,14 +273,15 @@ class AppIndex {
         ) else { return [] }
 
         var apps: [URL] = []
+        let canRecurse = recursive && depth < maxDepth - 1
 
         for url in contents {
             if url.pathExtension == "app" {
                 apps.append(url)
-            } else if recursive,
+            } else if canRecurse,
                       (try? url.resourceValues(forKeys: [.isDirectoryKey]))?.isDirectory == true {
                 // Recurse into subdirectories (but not into .app bundles)
-                apps += findApps(in: url, recursive: true)
+                apps += findApps(in: url, recursive: true, depth: depth + 1, maxDepth: maxDepth)
             }
         }
 
