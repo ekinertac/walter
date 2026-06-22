@@ -38,15 +38,16 @@ It boots in tens of milliseconds, draws with native AppKit, and reloads its conf
 
 |  | Walter | Raycast | Alfred | Spotlight |
 |---|---|---|---|---|
-| Price | Free | Free (VC-backed) | Free + paid Powerpack | Built-in |
+| Price | Free | Free; paid Pro / AI | Free + paid Powerpack | Built-in |
 | Open source | ✅ MIT | ❌ | ❌ | ❌ |
+| Built with | Swift + AppKit | WebView + Node (v2.0) | Native | Native |
 | Account required | None | Yes | None | None |
-| Telemetry | None | Yes | Minimal | Apple |
+| Telemetry | None | Extensive | Minimal | Apple |
 | App size | ~4.3 MB | ~100 MB+ | tens of MB | built-in |
 | Plain-text config | ✅ TOML | ❌ GUI / cloud | ❌ GUI | ❌ |
 | Calculator / unit / currency | ✅ all three | ✅ | Powerpack | partial |
 
-Raycast wins on plugin breadth and built-in AI; Alfred is mature and beloved. Walter competes on footprint, openness, and not asking you to sign in. Full landing page and comparisons at **[walterlauncher.com](https://walterlauncher.com)**.
+Raycast wins on plugin breadth and built-in AI, but its 2.0 rewrite moved the UI to a React/TypeScript web view on a Node.js runtime (not Electron, but no longer pure native), and it's VC-backed with paid tiers. Alfred is mature and beloved. Walter stays pure Swift + AppKit, free, and open. Full comparisons at **[walterlauncher.com](https://walterlauncher.com)** — [vs Raycast](https://walterlauncher.com/vs-raycast) · [vs Alfred](https://walterlauncher.com/vs-alfred) · [vs Spotlight](https://walterlauncher.com/vs-spotlight).
 
 ## Principles
 
