@@ -5,6 +5,35 @@ All notable changes to Walter are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.6.0] — 2026-06-23
+
+### Added
+- **Homebrew apps are indexed.** Both Apple Silicon
+  (`/opt/homebrew/Caskroom`, `/opt/homebrew/Cellar`) and Intel
+  (`/usr/local/Caskroom`, `/usr/local/Cellar`) Homebrew roots are now
+  default scan dirs. Cask installs that don't symlink to `/Applications`
+  (custom `--appdir`, certain formulas) are no longer invisible.
+  Per-root recursion-depth cap keeps the Cellar walk shallow so we
+  find `<formula>/<version>/<App>.app` without descending into formula
+  install trees (Python's stdlib alone could otherwise add tens of
+  thousands of dirs to the scan).
+
+### Fixed
+- **Alt+Tab is fast again.** The "refresh app index on launcher open"
+  safety net introduced for App-Napped agents was synchronously
+  walking `/Applications` and the freshly-added Homebrew Cellar on
+  the show path. With ~300 Homebrew formulas that meant the panel
+  could lag by a few hundred milliseconds — long enough that fast
+  typers saw the first few keystrokes leak into the previously
+  focused app ("sl" landing in Slack, "ack" reaching Walter). Both
+  `AppIndex.refresh()` and the `FSEvents` callback now build the new
+  entry list on a background queue and assign it atomically on main,
+  so the show path no longer touches the filesystem.
+- **File-index FSEvents bursts no longer stall the launcher.** Same
+  fix applied to `FileIndex` — saving a Word doc fires several events
+  in succession, and each one previously triggered a synchronous walk
+  of every configured `file_dirs` root on the main queue.
+
 ## [1.5.3] — 2026-06-01
 
 ### Added
@@ -164,6 +193,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Menu bar agent, launch-at-login, scalable UI, frosted-glass blur,
   hot-reloaded TOML config.
 
+[1.6.0]: https://github.com/ekinertac/walter/releases/tag/v1.6.0
 [1.5.3]: https://github.com/ekinertac/walter/releases/tag/v1.5.3
 [1.5.2]: https://github.com/ekinertac/walter/releases/tag/v1.5.2
 [1.5.1]: https://github.com/ekinertac/walter/releases/tag/v1.5.1

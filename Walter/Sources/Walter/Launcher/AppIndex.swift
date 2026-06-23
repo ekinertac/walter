@@ -206,15 +206,24 @@ class AppIndex {
         "com.apple.findmy",
     ]
 
+    /// Performs a synchronous rebuild and assignment. Used at init for
+    /// the initial scan so the launcher has results on first display.
     private func rebuildIndex() {
-        // Two-key dedup: paths are deduped first (cheap, prevents reading
-        // the same bundle twice when it appears via overlapping scan dirs),
-        // then bundle IDs are deduped (catches the same logical app
-        // surfaced under different paths — e.g. /System/Applications/Tips.app
-        // vs /System/Library/CoreServices/Tips.app, or the duplicate
-        // Screenshot/Siri/Contacts bundles macOS ships).
-        // Scan-dir order is preserved, so /Applications wins over the
-        // /System/Library/CoreServices fallbacks.
+        allEntries = buildEntries()
+        print("AppIndex: \(allEntries.count) apps indexed from \(allDirs.count) directories")
+    }
+
+    /// Pure builder — walks scan dirs and returns a fresh entry list.
+    /// No mutation of shared state, safe to call from any thread.
+    ///
+    /// Two-key dedup: paths are deduped first (cheap, prevents reading
+    /// the same bundle twice when it appears via overlapping scan dirs),
+    /// then bundle IDs are deduped (catches the same logical app surfaced
+    /// under different paths — e.g. /System/Applications/Tips.app vs
+    /// /System/Library/CoreServices/Tips.app, or the duplicate
+    /// Screenshot/Siri/Contacts bundles macOS ships). Scan-dir order is
+    /// preserved, so /Applications wins over the CoreServices fallbacks.
+    private func buildEntries() -> [AppEntry] {
         var seenPaths = Set<String>()
         var seenBundleIDs = Set<String>()
         var newEntries: [AppEntry] = []
@@ -249,8 +258,7 @@ class AppIndex {
         }
 
         newEntries.sort { $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending }
-        allEntries = newEntries
-        print("AppIndex: \(allEntries.count) apps indexed from \(allDirs.count) directories")
+        return newEntries
     }
 
     /// Finds .app bundles in a directory. When `recursive` is true, also
@@ -397,25 +405,38 @@ class AppIndex {
         eventStream = nil
     }
 
-    /// Called by FSEvents when any watched directory changes.
-    /// Rebuilds the entire index (fast enough at ~50ms) rather than
-    /// trying to do incremental updates.
+    /// Called by FSEvents when any watched directory changes. The work
+    /// hops off the main queue so a noisy installer or fast `make`-reinstall
+    /// loop can't stall keystroke handling in the launcher.
     func handleFSEvent() {
-        rebuildIndex()
-        DispatchQueue.main.async { [weak self] in
-            self?.onChange()
-        }
+        rebuildAsync(qos: .utility)
     }
 
     /// Safety-net refresh, called when the launcher window is opened.
     /// FSEvents should normally keep the index current, but agent-app
     /// suspension (LSUIElement=true), bursty installers, and queue
     /// coalescing can occasionally let a freshly-installed app slip
-    /// past until the next event. Re-scanning on every panel show
-    /// hides those edge cases without measurable cost (~50ms for a
-    /// typical macOS install).
+    /// past until the next event. The rebuild now runs on a background
+    /// queue so `Alt+Tab` is never blocked while we walk the Homebrew
+    /// Cellar — the previous synchronous version cost a few hundred ms
+    /// at open time and the first keystrokes leaked into the active app.
     func refresh() {
-        rebuildIndex()
+        rebuildAsync(qos: .userInitiated)
+    }
+
+    /// Builds a fresh entry list on a background queue, then assigns it
+    /// on main. The `allEntries` property is only ever written on the
+    /// main queue, so search() and the UI never race with the rebuild.
+    private func rebuildAsync(qos: DispatchQoS.QoSClass) {
+        DispatchQueue.global(qos: qos).async { [weak self] in
+            guard let self else { return }
+            let newEntries = self.buildEntries()
+            DispatchQueue.main.async { [weak self] in
+                guard let self else { return }
+                self.allEntries = newEntries
+                self.onChange()
+            }
+        }
     }
 }
 

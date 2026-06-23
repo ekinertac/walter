@@ -92,7 +92,16 @@ final class FileIndex {
 
     // MARK: - Index building
 
+    /// Synchronous rebuild — used at init so the first launcher show
+    /// already sees results. Subsequent rebuilds go through `rebuildAsync`.
     private func rebuildIndex() {
+        allEntries = buildEntries()
+        print("FileIndex: \(allEntries.count) files indexed across \(dirs.count) directories")
+    }
+
+    /// Pure builder, safe to call from any thread — walks the configured
+    /// dirs and returns a fresh entry list without touching shared state.
+    private func buildEntries() -> [FileEntry] {
         var entries: [FileEntry] = []
         let fm = FileManager.default
         for dir in dirs where fm.fileExists(atPath: dir) {
@@ -102,8 +111,22 @@ final class FileIndex {
         if entries.count >= Self.maxEntries {
             print("FileIndex: hit \(Self.maxEntries) cap — narrow `file_dirs` for cleaner results")
         }
-        allEntries = entries
-        print("FileIndex: \(allEntries.count) files indexed across \(dirs.count) directories")
+        return entries
+    }
+
+    /// Builds a fresh entry list on a background queue, then assigns it
+    /// on main. `allEntries` is only ever written on the main queue, so
+    /// the launcher's search() never sees a half-built index.
+    private func rebuildAsync(qos: DispatchQoS.QoSClass) {
+        DispatchQueue.global(qos: qos).async { [weak self] in
+            guard let self else { return }
+            let newEntries = self.buildEntries()
+            DispatchQueue.main.async { [weak self] in
+                guard let self else { return }
+                self.allEntries = newEntries
+                self.onChange()
+            }
+        }
     }
 
     /// Recursive directory walk with bundle/skip-dir pruning. We pass
@@ -193,11 +216,11 @@ final class FileIndex {
     }
 
     /// Internal callback target — public to satisfy the C callback bridge.
+    /// The work hops off the main queue so a noisy save (Word docs fire
+    /// several events) or a folder full of downloads can't stall the
+    /// launcher's keystroke handling.
     func handleFSEvent() {
-        rebuildIndex()
-        DispatchQueue.main.async { [weak self] in
-            self?.onChange()
-        }
+        rebuildAsync(qos: .utility)
     }
 
     // MARK: - Helpers
