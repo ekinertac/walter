@@ -5,6 +5,19 @@ All notable changes to Walter are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.7.0] — 2026-06-26
+
+### Added
+- **Query history.** Hit `Up` on an empty input to recall the most
+  recent query you actually launched — Enter, `Cmd+Enter`,
+  `Cmd+1`…`Cmd+9`, and `Cmd+C` all push the current query onto the
+  stack. Keep pressing `Up` to step further back, `Down` to step
+  toward newer; `Down` past the newest clears the input. The moment
+  you start typing, Up/Down go back to moving the result selection.
+  Persisted at `~/.config/walter/history.json`, capped at 50 entries,
+  consecutive duplicates collapsed. Theme-picker filtering is
+  deliberately not recorded.
+
 ## [1.6.0] — 2026-06-23
 
 ### Added
@@ -193,6 +206,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Menu bar agent, launch-at-login, scalable UI, frosted-glass blur,
   hot-reloaded TOML config.
 
+[1.7.0]: https://github.com/ekinertac/walter/releases/tag/v1.7.0
 [1.6.0]: https://github.com/ekinertac/walter/releases/tag/v1.6.0
 [1.5.3]: https://github.com/ekinertac/walter/releases/tag/v1.5.3
 [1.5.2]: https://github.com/ekinertac/walter/releases/tag/v1.5.2

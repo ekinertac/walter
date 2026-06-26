@@ -156,6 +156,7 @@ url  = "https://www.youtube.com/results?search_query={query}"
 |---|---|
 | Open/close launcher | Alt+Space (configurable) |
 | Navigate results | Tab / Shift+Tab / Arrow keys |
+| Recall last query | Up arrow on empty input (Down to step toward newer) |
 | Launch / copy result | Enter |
 | Reveal in Finder | Cmd+Enter (apps and file-search results) |
 | Jump to Nth result | Cmd+1 … Cmd+9 (hint shown on each row) |
