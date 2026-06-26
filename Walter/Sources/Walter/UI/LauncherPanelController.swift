@@ -78,7 +78,11 @@ class LauncherPanelController: NSObject {
         let placeholderColor = config.theme.placeholderColor.flatMap { NSColor(hex: $0) }
             ?? fgColor.withAlphaComponent(0.5)
         let searchFont = Self.resolveFont(name: config.theme.font, size: config.s(28), weight: .light)
-        searchField = NSTextField()
+        // CenteredTextField vertically centers text inside the (much taller
+        // at high `layout.scale`) field, so when the auto-shrink kicks in
+        // the cursor and glyphs stay on the field's midline instead of
+        // sticking to the top.
+        searchField = CenteredTextField()
         searchField.font = searchFont
         // Attributed placeholder must carry the field's font explicitly —
         // without it the placeholder reverts to the default system size
@@ -90,6 +94,17 @@ class LauncherPanelController: NSObject {
         searchField.isBezeled = false
         searchField.focusRingType = .none
         searchField.drawsBackground = false
+        // Lock the cell to single-line, horizontally-scrolling behavior.
+        // Without this, very long queries at large `layout.scale` values
+        // wrap to multiple visual lines and bleed past the top of the
+        // input area (a long path like
+        // `subl ~/Code/.../specs/2026-06-26-qwok-design.md` renders the
+        // first half above the search icon and clips against the panel
+        // edge).
+        searchField.cell?.usesSingleLineMode = true
+        searchField.cell?.wraps = false
+        searchField.cell?.isScrollable = true
+        searchField.lineBreakMode = .byTruncatingHead
         searchField.textColor = fgColor
         searchField.translatesAutoresizingMaskIntoConstraints = false
 
@@ -293,6 +308,9 @@ class LauncherPanelController: NSObject {
 
     private func resetState() {
         searchField.stringValue = ""
+        // Restore the input font to the base size so the next open
+        // doesn't briefly flash whatever shrunk size the last query left.
+        adjustInputFontSize()
         selectedIndex = 0
         isThemePicker = false
         updateResults(query: "")
@@ -541,7 +559,45 @@ class LauncherPanelController: NSObject {
     /// the user can keep stepping with subsequent Up/Down presses.
     private func setQueryFromHistory(_ query: String) {
         searchField.stringValue = query
+        adjustInputFontSize()
         updateResults(query: query)
+    }
+
+    /// Shrinks the search input's font when the text is wider than the
+    /// field can display at the base size, with a hard floor so it never
+    /// becomes unreadable. At large `layout.scale` values (e.g. 3.0) the
+    /// base font is ~84pt — a long path like
+    /// `subl ~/Code/qwok/docs/superpowers/specs/2026-06-26-qwok-design.md`
+    /// is multiple hundreds of points wide. Without this, the field's
+    /// horizontal scroll hides everything but the tail, making it
+    /// impossible to read the query you're typing.
+    private func adjustInputFontSize() {
+        let text = searchField.stringValue
+        let baseSize = config.s(28)
+        let minSize = config.s(14)
+        let baseFont = Self.resolveFont(name: config.theme.font, size: baseSize, weight: .light)
+
+        // Empty input shows the placeholder, which we want at full size.
+        guard !text.isEmpty else {
+            if searchField.font != baseFont { searchField.font = baseFont }
+            return
+        }
+
+        let fieldWidth = searchField.bounds.width
+        guard fieldWidth > 0 else { return }
+
+        let measured = (text as NSString).size(withAttributes: [.font: baseFont]).width
+        let targetSize: CGFloat
+        if measured <= fieldWidth {
+            targetSize = baseSize
+        } else {
+            // Scale proportionally to fit, floored at the minimum so very
+            // long pasted blobs don't render at one-pixel-tall.
+            let scale = fieldWidth / measured
+            targetSize = max(minSize, baseSize * scale)
+        }
+
+        searchField.font = Self.resolveFont(name: config.theme.font, size: targetSize, weight: .light)
     }
 
     /// Cmd+1…9 — jump to and launch the Nth visible result. No-op when
@@ -607,6 +663,7 @@ extension LauncherPanelController: NSTextFieldDelegate {
         // Any real keystroke exits history navigation — subsequent Up/Down
         // go back to moving the result selection.
         history.resetCursor()
+        adjustInputFontSize()
         updateResults(query: searchField.stringValue)
     }
 

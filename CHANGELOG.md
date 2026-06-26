@@ -5,6 +5,26 @@ All notable changes to Walter are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.7.1] — 2026-06-26
+
+### Fixed
+- **Long queries no longer bleed past the top of the search input.**
+  The `NSTextField` cell now enforces single-line, horizontally
+  scrolling behavior. At large `layout.scale` values a long path
+  like `subl ~/Code/.../specs/2026-06-26-qwok-design.md` previously
+  wrapped to two visual lines and the first half clipped against the
+  panel edge.
+- **Search-input font auto-shrinks for long text.** Once the query
+  is wider than the field can show at the base size, the font scales
+  down proportionally, floored at a readable minimum, so the whole
+  query stays visible while you type. Restores to the base size as
+  soon as the field is cleared.
+- **Search-input text now sits vertically centered.** A custom
+  `CenteredTextField` cell aligns the drawn text, the cursor, and
+  selection rectangles to the field's vertical midline. Without it,
+  the auto-shrunk font hugged the top of the field and left a large
+  empty band beneath.
+
 ## [1.7.0] — 2026-06-26
 
 ### Added
@@ -206,6 +226,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Menu bar agent, launch-at-login, scalable UI, frosted-glass blur,
   hot-reloaded TOML config.
 
+[1.7.1]: https://github.com/ekinertac/walter/releases/tag/v1.7.1
 [1.7.0]: https://github.com/ekinertac/walter/releases/tag/v1.7.0
 [1.6.0]: https://github.com/ekinertac/walter/releases/tag/v1.6.0
 [1.5.3]: https://github.com/ekinertac/walter/releases/tag/v1.5.3
