@@ -92,11 +92,19 @@ BUILT_APP  := dist/build/Walter.app
 
 .PHONY: reinstall
 reinstall:
-	@# Quit any running instance gracefully before replacing the bundle
+	@# Quit any running instance gracefully before replacing the bundle.
+	@# The `open` at the end WILL race with a still-exiting process: if
+	@# Walter is technically still running when `open` fires, macOS just
+	@# brings the old process to the front instead of launching the new
+	@# binary. That leaves you with the old code executing while the
+	@# bundle on disk (and the version defaults will read) is the new
+	@# one — a very confusing form of "reinstall didn't take effect."
+	@# So poll until the process is really gone before continuing.
 	@echo "→ Quitting Walter..."
 	@osascript -e 'tell application "Walter" to quit' 2>/dev/null || true
 	@sleep 1
 	@pkill -x Walter 2>/dev/null || true
+	@while pgrep -x Walter >/dev/null 2>&1; do sleep 0.1; done
 	@echo "→ Removing $(APP_BUNDLE)..."
 	@rm -rf $(APP_BUNDLE)
 	@echo "→ Building latest release..."
