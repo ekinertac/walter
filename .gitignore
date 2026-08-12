@@ -15,3 +15,8 @@ Cargo.lock
 .DS_Store
 *.dSYM
 core/target/
+
+# Local tooling / personal state (not part of the project source)
+.agents/
+marketing/
+skills-lock.json
