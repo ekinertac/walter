@@ -297,34 +297,42 @@ class AppIndex {
     }
 
     /// Returns true if the bundle is an internal helper that should not
-    /// appear in launcher results. Heuristics:
-    ///   1. No CFBundleIconFile declared in Info.plist (most agents).
-    ///   2. CFBundleIconFile names a file that doesn't exist on disk
-    ///      (rare, but a strong signal it isn't user-facing).
-    ///   3. Bundle ID is in the hardcoded internal list (AVB and friends
-    ///      that *do* ship icons but exist only for niche subsystems).
+    /// appear in launcher results. The heuristic is deliberately
+    /// location-scoped: the "no icon declared → agent" test only applies
+    /// to bundles under `/System/`, because that's where genuine helper
+    /// agents live (RegisterPluginIMApp, NowPlayingTouchUI,
+    /// WindowManagerShowDesktopEducation, etc.). Anything the user
+    /// installed themselves in /Applications, ~/Applications, Homebrew,
+    /// etc. is trusted as launchable regardless of icon-key presence —
+    /// menubar-agent apps (LSUIElement=true) are legitimately icon-less
+    /// but users still want to launch them from Walter (OTP Copy,
+    /// Walter itself, most `bartender`-style tools).
+    ///
+    /// The bundle-ID allowlist/blocklist still wins in either location so
+    /// individual overrides (System Settings without CFBundleIconFile;
+    /// AVB Configuration junk) keep working.
     private static func isInternalAgent(bundle: Bundle, at url: URL) -> Bool {
         let bundleID = bundle.bundleIdentifier
         if let id = bundleID, alwaysIncludeBundleIDs.contains(id) {
             return false
         }
-
         if let id = bundleID, internalBundleIDs.contains(id) {
             return true
+        }
+
+        // Location trust: user-installed apps pass unconditionally.
+        // Only bundles under /System/ go through the icon heuristic.
+        if !url.path.hasPrefix("/System/") {
+            return false
         }
 
         let info = bundle.infoDictionary ?? [:]
 
         // An app declares its icon one of several ways, and any of them
         // marks it as a real, user-facing app rather than a headless agent:
-        //   * CFBundleIconName   — asset-catalog icon, how every modern
-        //                          Xcode-built app ships (no top-level .icns)
+        //   * CFBundleIconName   — asset-catalog icon
         //   * CFBundleIcons / CFBundleIcons~ipad — iOS-on-Mac App Store apps
-        //                          (e.g. Tapo), whose bundle is wrapped and
-        //                          has no Contents/Resources/*.icns at all
         //   * CFBundleIconFile   — classic .icns reference (checked below)
-        // Without this branch, asset-catalog apps and every iOS-on-Mac app
-        // were misclassified as agents and silently dropped from the index.
         if info["CFBundleIconName"] != nil ||
            info["CFBundleIcons"] != nil ||
            info["CFBundleIcons~ipad"] != nil {
