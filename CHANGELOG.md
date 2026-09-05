@@ -5,6 +5,22 @@ All notable changes to Walter are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.7.2] — 2026-09-06
+
+### Fixed
+- **User-installed apps without an icon key are no longer dropped
+  from the index.** The internal-agent filter treated any bundle
+  without `CFBundleIconFile` / `CFBundleIconName` / `CFBundleIcons`
+  as a helper daemon. That's correct for genuine helpers in
+  `/System/Library/CoreServices/` (RegisterPluginIMApp,
+  NowPlayingTouchUI, etc.) but wrong for menubar-agent apps you
+  built yourself and never bothered to give an icon —
+  `LSUIElement=true` is set on both, so the flag can't tell them
+  apart. The icon-key check is now scoped to bundles under
+  `/System/`; anything installed in `/Applications`,
+  `~/Applications`, Homebrew's Caskroom / Cellar, etc. is trusted
+  unconditionally.
+
 ## [1.7.1] — 2026-06-26
 
 ### Fixed
@@ -226,6 +242,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Menu bar agent, launch-at-login, scalable UI, frosted-glass blur,
   hot-reloaded TOML config.
 
+[1.7.2]: https://github.com/ekinertac/walter/releases/tag/v1.7.2
 [1.7.1]: https://github.com/ekinertac/walter/releases/tag/v1.7.1
 [1.7.0]: https://github.com/ekinertac/walter/releases/tag/v1.7.0
 [1.6.0]: https://github.com/ekinertac/walter/releases/tag/v1.6.0
