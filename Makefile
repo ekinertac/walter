@@ -92,14 +92,18 @@ BUILT_APP  := dist/build/Walter.app
 
 .PHONY: reinstall
 reinstall:
-	@# Quit any running instance gracefully before replacing the bundle.
+	@# Fast dev install: build a signed .app and copy it to /Applications.
+	@# Skips notarization AND the DMG packaging that `make dist` runs — the
+	@# DMG isn't used here anyway (we just cp Walter.app out of the DMG
+	@# staging dir), so building it wastes ~15s per iteration on
+	@# create-dmg's disk-image mount and window-arrangement AppleScript.
+	@# Codesigning still runs so Accessibility permissions granted to the
+	@# /Applications binary persist across rebuilds.
+	@#
 	@# The `open` at the end WILL race with a still-exiting process: if
 	@# Walter is technically still running when `open` fires, macOS just
 	@# brings the old process to the front instead of launching the new
-	@# binary. That leaves you with the old code executing while the
-	@# bundle on disk (and the version defaults will read) is the new
-	@# one — a very confusing form of "reinstall didn't take effect."
-	@# So poll until the process is really gone before continuing.
+	@# binary. Poll until the process is really gone before continuing.
 	@echo "→ Quitting Walter..."
 	@osascript -e 'tell application "Walter" to quit' 2>/dev/null || true
 	@sleep 1
@@ -107,8 +111,8 @@ reinstall:
 	@while pgrep -x Walter >/dev/null 2>&1; do sleep 0.1; done
 	@echo "→ Removing $(APP_BUNDLE)..."
 	@rm -rf $(APP_BUNDLE)
-	@echo "→ Building latest release..."
-	@./dist/build-release.sh --skip-notarize
+	@echo "→ Building signed .app (no DMG)..."
+	@./dist/build-release.sh --skip-notarize --skip-dmg
 	@echo "→ Installing to /Applications..."
 	@cp -R $(BUILT_APP) /Applications/
 	@echo "→ Launching Walter..."

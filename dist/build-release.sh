@@ -7,8 +7,11 @@
 #   - create-dmg installed (brew install create-dmg)
 #
 # Usage:
-#   ./dist/build-release.sh          → builds + signs + notarizes + DMG
-#   ./dist/build-release.sh --skip-notarize  → skip notarization (faster for testing)
+#   ./dist/build-release.sh                     → builds + signs + notarizes + DMG
+#   ./dist/build-release.sh --skip-notarize     → skip notarization (faster for testing)
+#   ./dist/build-release.sh --skip-dmg          → skip DMG packaging (dev install path)
+#   ./dist/build-release.sh --skip-notarize --skip-dmg  → fastest: build + sign only,
+#                                                          bundle at dist/build/Walter.app
 
 set -euo pipefail
 
@@ -25,7 +28,13 @@ KEYCHAIN_PROFILE="AC_PASSWORD"
 VERSION=$(/usr/libexec/PlistBuddy -c "Print :CFBundleShortVersionString" "$DIST_DIR/Info.plist")
 
 SKIP_NOTARIZE=false
-[[ "${1:-}" == "--skip-notarize" ]] && SKIP_NOTARIZE=true
+SKIP_DMG=false
+for arg in "$@"; do
+    case "$arg" in
+        --skip-notarize) SKIP_NOTARIZE=true ;;
+        --skip-dmg)      SKIP_DMG=true ;;
+    esac
+done
 
 echo "=========================================="
 echo "  Walter v${VERSION} — Release Build"
@@ -127,6 +136,17 @@ fi
 # ---------------------------------------------------------------------------
 # 5. Create DMG
 # ---------------------------------------------------------------------------
+if [[ "$SKIP_DMG" == true ]]; then
+    echo ""
+    echo "→ Skipping DMG packaging (--skip-dmg)"
+    echo ""
+    echo "=========================================="
+    echo "  ✓ Done!"
+    echo "  App: $APP_DIR"
+    echo "=========================================="
+    exit 0
+fi
+
 echo ""
 echo "→ Creating DMG..."
 
