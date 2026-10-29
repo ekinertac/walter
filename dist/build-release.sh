@@ -86,10 +86,8 @@ elif [[ -f "$SWIFT_DIR/Sources/Walter/Resources/AppIcon.icns" ]]; then
 fi
 
 # Resource bundle (contains icons, etc.)
-RESOURCE_BUNDLE=$(find "$SWIFT_DIR/.build/release" -name "Walter_Walter.bundle" -maxdepth 1 2>/dev/null | head -1)
-if [[ -n "$RESOURCE_BUNDLE" ]]; then
-    cp -R "$RESOURCE_BUNDLE" "$RESOURCES/"
-fi
+RESOURCE_BUNDLE="$SWIFT_DIR/.build/release/Walter_Walter.bundle"
+cp -R "$RESOURCE_BUNDLE" "$RESOURCES/"
 
 echo "  Bundle: $APP_DIR"
 
