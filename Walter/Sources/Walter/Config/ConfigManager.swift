@@ -150,7 +150,7 @@ class ConfigManager {
 # Walter configuration — reference file
 #
 # Changes apply live — just save. Comments start with '#'.
-# Full docs: https://github.com/ekinertac/walter/blob/master/docs/config.md
+# Full docs: docs/config.md
 #
 # Sections (in order below):
 #   [theme]        — colors, fonts, blur, corner radius

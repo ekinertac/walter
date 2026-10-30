@@ -19,7 +19,7 @@ class StatusBarController {
         if let button = statusItem.button {
             // Load the dedicated menu bar icon (black on transparent).
             // isTemplate = true tells macOS to invert it in dark mode.
-            if let iconURL = Bundle.module.url(forResource: "menubar_icon", withExtension: "png"),
+            if let iconURL = WalterResources.bundle.url(forResource: "menubar_icon", withExtension: "png"),
                let icon = NSImage(contentsOf: iconURL) {
                 icon.size = NSSize(width: 18, height: 18)
                 icon.isTemplate = true
@@ -185,10 +185,11 @@ class StatusBarController {
     @objc private func aboutClicked() {
         let alert = NSAlert()
         alert.messageText = "Walter"
-        alert.informativeText = "Version 1.0.0\n\nA fast, native macOS launcher.\nhttps://github.com/ekinertac/walter"
+        let version = Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "local"
+        alert.informativeText = "Version \(version)\n\nPersonal local build.\nA fast, native macOS launcher."
         alert.alertStyle = .informational
 
-        if let iconURL = Bundle.module.url(forResource: "AppIcon", withExtension: "icns"),
+        if let iconURL = WalterResources.bundle.url(forResource: "AppIcon", withExtension: "icns"),
            let icon = NSImage(contentsOf: iconURL) {
             alert.icon = icon
         }

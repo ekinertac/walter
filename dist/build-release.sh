@@ -1,178 +1,45 @@
 #!/bin/bash
-# build-release.sh — Build, sign, notarize, and package Walter.app as a DMG
-#
-# Prerequisites:
-#   - "Developer ID Application: EKIN ERTAC (QKN7RYV5PD)" certificate in keychain
-#   - Notarytool keychain profile "AC_PASSWORD" configured
-#   - create-dmg installed (brew install create-dmg)
-#
-# Usage:
-#   ./dist/build-release.sh                     → builds + signs + notarizes + DMG
-#   ./dist/build-release.sh --skip-notarize     → skip notarization (faster for testing)
-#   ./dist/build-release.sh --skip-dmg          → skip DMG packaging (dev install path)
-#   ./dist/build-release.sh --skip-notarize --skip-dmg  → fastest: build + sign only,
-#                                                          bundle at dist/build/Walter.app
-
+# Build a locally-usable Walter.app with Swift CLI tools and ad-hoc signing.
 set -euo pipefail
+
+if [[ $# -ne 0 ]]; then
+    echo "Usage: $0 (no arguments; builds dist/build/Walter.app)" >&2
+    exit 2
+fi
+if [[ "$(uname -s)" != Darwin ]]; then
+    echo "ERROR: Building Walter requires macOS." >&2
+    exit 1
+fi
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 PROJECT_DIR="$(dirname "$SCRIPT_DIR")"
 SWIFT_DIR="$PROJECT_DIR/Walter"
-DIST_DIR="$PROJECT_DIR/dist"
-BUILD_DIR="$DIST_DIR/build"
+BUILD_DIR="$SCRIPT_DIR/build"
+APP_DIR="$BUILD_DIR/Walter.app"
+SWIFT="${SWIFT:-swift}"
 
-APP_NAME="Walter"
-BUNDLE_ID="com.ekinertac.walter"
-SIGNING_IDENTITY="Developer ID Application: EKIN ERTAC (QKN7RYV5PD)"
-KEYCHAIN_PROFILE="AC_PASSWORD"
-VERSION=$(/usr/libexec/PlistBuddy -c "Print :CFBundleShortVersionString" "$DIST_DIR/Info.plist")
-
-SKIP_NOTARIZE=false
-SKIP_DMG=false
-for arg in "$@"; do
-    case "$arg" in
-        --skip-notarize) SKIP_NOTARIZE=true ;;
-        --skip-dmg)      SKIP_DMG=true ;;
-    esac
-done
-
-echo "=========================================="
-echo "  Walter v${VERSION} — Release Build"
-echo "=========================================="
-
-# Clean
-rm -rf "$BUILD_DIR"
-mkdir -p "$BUILD_DIR"
-
-# ---------------------------------------------------------------------------
-# 1. Build release binary
-# ---------------------------------------------------------------------------
-echo ""
-echo "→ Building release binary..."
-cd "$SWIFT_DIR"
-swift build -c release 2>&1 | tail -3
-
-BINARY="$SWIFT_DIR/.build/release/Walter"
-if [[ ! -f "$BINARY" ]]; then
-    echo "ERROR: Binary not found at $BINARY"
+# Build before replacing the previous bundle, and use SwiftPM's actual output
+# path rather than assuming a particular architecture or toolchain layout.
+echo "→ Building Walter for this Mac..."
+"$SWIFT" build --package-path "$SWIFT_DIR" -c release
+BIN_DIR="$("$SWIFT" build --package-path "$SWIFT_DIR" -c release --show-bin-path)"
+RESOURCE_BUNDLE="$BIN_DIR/Walter_Walter.bundle"
+[[ -f "$BIN_DIR/Walter" && -d "$RESOURCE_BUNDLE" ]] || {
+    echo "ERROR: SwiftPM executable or resource bundle is missing." >&2
     exit 1
-fi
-echo "  Binary: $BINARY ($(du -h "$BINARY" | cut -f1) )"
+}
 
-# ---------------------------------------------------------------------------
-# 2. Create .app bundle
-# ---------------------------------------------------------------------------
-echo ""
-echo "→ Creating Walter.app bundle..."
+rm -rf "$APP_DIR"
+mkdir -p "$APP_DIR/Contents/MacOS" "$APP_DIR/Contents/Resources"
+cp "$BIN_DIR/Walter" "$APP_DIR/Contents/MacOS/Walter"
+cp "$SCRIPT_DIR/Info.plist" "$APP_DIR/Contents/Info.plist"
+cp "$SWIFT_DIR/Sources/Walter/Resources/AppIcon.icns" "$APP_DIR/Contents/Resources/"
+# WalterResources prefers the embedded bundle over SwiftPM's build-tree path.
+cp -R "$RESOURCE_BUNDLE" "$APP_DIR/Contents/Resources/"
+plutil -lint "$APP_DIR/Contents/Info.plist"
 
-APP_DIR="$BUILD_DIR/$APP_NAME.app"
-CONTENTS="$APP_DIR/Contents"
-MACOS="$CONTENTS/MacOS"
-RESOURCES="$CONTENTS/Resources"
-
-mkdir -p "$MACOS" "$RESOURCES"
-
-# Binary
-cp "$BINARY" "$MACOS/Walter"
-
-# Info.plist
-cp "$DIST_DIR/Info.plist" "$CONTENTS/Info.plist"
-
-# Icon
-if [[ -f "$SWIFT_DIR/.build/release/Walter_Walter.bundle/Contents/Resources/AppIcon.icns" ]]; then
-    cp "$SWIFT_DIR/.build/release/Walter_Walter.bundle/Contents/Resources/AppIcon.icns" "$RESOURCES/AppIcon.icns"
-elif [[ -f "$SWIFT_DIR/Sources/Walter/Resources/AppIcon.icns" ]]; then
-    cp "$SWIFT_DIR/Sources/Walter/Resources/AppIcon.icns" "$RESOURCES/AppIcon.icns"
-fi
-
-# Resource bundle (contains icons, etc.)
-RESOURCE_BUNDLE="$SWIFT_DIR/.build/release/Walter_Walter.bundle"
-cp -R "$RESOURCE_BUNDLE" "$RESOURCES/"
-
-echo "  Bundle: $APP_DIR"
-
-# ---------------------------------------------------------------------------
-# 3. Code sign with hardened runtime
-# ---------------------------------------------------------------------------
-echo ""
-echo "→ Signing with: $SIGNING_IDENTITY"
-
-codesign --force --deep --options runtime \
-    --sign "$SIGNING_IDENTITY" \
-    --entitlements "$DIST_DIR/Walter.entitlements" \
-    --timestamp \
-    "$APP_DIR"
-
-echo "  Verifying signature..."
+echo "→ Applying an ad-hoc signature (no certificate or account)..."
+codesign --force --sign - --timestamp=none "$APP_DIR"
 codesign --verify --deep --strict "$APP_DIR"
-echo "  ✓ Signature valid"
-
-# ---------------------------------------------------------------------------
-# 4. Notarize
-# ---------------------------------------------------------------------------
-if [[ "$SKIP_NOTARIZE" == true ]]; then
-    echo ""
-    echo "→ Skipping notarization (--skip-notarize)"
-else
-    echo ""
-    echo "→ Creating ZIP for notarization..."
-    NOTARIZE_ZIP="$BUILD_DIR/Walter-notarize.zip"
-    ditto -c -k --keepParent "$APP_DIR" "$NOTARIZE_ZIP"
-
-    echo "→ Submitting to Apple notary service..."
-    xcrun notarytool submit "$NOTARIZE_ZIP" \
-        --keychain-profile "$KEYCHAIN_PROFILE" \
-        --wait
-
-    echo "→ Stapling notarization ticket..."
-    xcrun stapler staple "$APP_DIR"
-    echo "  ✓ Notarization complete"
-
-    rm "$NOTARIZE_ZIP"
-fi
-
-# ---------------------------------------------------------------------------
-# 5. Create DMG
-# ---------------------------------------------------------------------------
-if [[ "$SKIP_DMG" == true ]]; then
-    echo ""
-    echo "→ Skipping DMG packaging (--skip-dmg)"
-    echo ""
-    echo "=========================================="
-    echo "  ✓ Done!"
-    echo "  App: $APP_DIR"
-    echo "=========================================="
-    exit 0
-fi
-
-echo ""
-echo "→ Creating DMG..."
-
-DMG_NAME="Walter-${VERSION}.dmg"
-DMG_PATH="$BUILD_DIR/$DMG_NAME"
-
-# Remove old DMG if exists
-rm -f "$DMG_PATH"
-
-create-dmg \
-    --volname "Walter" \
-    --volicon "$RESOURCES/AppIcon.icns" \
-    --window-pos 200 120 \
-    --window-size 600 400 \
-    --icon-size 100 \
-    --icon "Walter.app" 175 190 \
-    --app-drop-link 425 190 \
-    --hide-extension "Walter.app" \
-    "$DMG_PATH" \
-    "$APP_DIR" \
-    2>&1 | grep -v "^$"
-
-# Sign the DMG too
-codesign --force --sign "$SIGNING_IDENTITY" --timestamp "$DMG_PATH"
-
-echo ""
-echo "=========================================="
-echo "  ✓ Done!"
-echo "  DMG: $DMG_PATH"
-echo "  Size: $(du -h "$DMG_PATH" | cut -f1)"
-echo "=========================================="
+echo "Built: $APP_DIR"
+echo "Quit Walter before replacing an installed copy. Drag this app into ~/Applications to install."
