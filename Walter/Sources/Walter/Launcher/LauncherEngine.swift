@@ -141,12 +141,6 @@ class LauncherEngine {
                     let result = makeParameterizedAliasResult(displayName: displayName, value: value, query: rest)
                     pinnedTop.append(result)
                     parameterizedAliasMatched = true
-                    // Trigger fetch for newly-encountered aliases so the
-                    // next render picks up the favicon even if config
-                    // wasn't reloaded since the alias was added.
-                    if let host = FaviconCache.hostname(for: value) {
-                        FaviconCache.shared.prefetch(hostnames: [host])
-                    }
                 }
             }
 
@@ -170,10 +164,6 @@ class LauncherEngine {
                     } else if value.hasPrefix("http://") || value.hasPrefix("https://") {
                         action = .url(value)
                         subtitle = value
-                        if let host = FaviconCache.hostname(for: value),
-                           let favicon = FaviconCache.shared.image(for: host) {
-                            icon = favicon
-                        }
                     } else {
                         action = .open(value)
                         subtitle = value
@@ -292,11 +282,6 @@ class LauncherEngine {
             let url = value.replacingOccurrences(of: "{query}", with: encoded)
             action = .url(url)
             subtitle = url
-            // Site favicon if we have one cached; otherwise the link symbol.
-            if let host = FaviconCache.hostname(for: value),
-               let favicon = FaviconCache.shared.image(for: host) {
-                icon = favicon
-            }
         } else {
             let path = value.replacingOccurrences(of: "{query}", with: query)
             action = .open(path)

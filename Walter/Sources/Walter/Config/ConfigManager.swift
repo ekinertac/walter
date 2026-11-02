@@ -49,11 +49,6 @@ class ConfigManager {
         var showPath: Bool = true
         var excludedApps: [String] = []
         var extraAppDirs: [String] = []
-        /// Where to fetch URL-alias favicons from. Either a known shorthand
-        /// (`google` / `duckduckgo` / `iconhorse`) or a full URL template
-        /// containing `{host}`. Defaults to Google's S2 service at 128px,
-        /// which is by far the highest-resolution free option.
-        var faviconService: String = "google"
         /// Directories indexed for prefix-triggered file search (e.g. ``foo``).
         /// Empty disables file search entirely. The defaults live in the
         /// generated config file, NOT here — Walter must never start
@@ -157,7 +152,6 @@ class ConfigManager {
 #   [layout]       — window size, position, scale, list-vs-grid mode
 #   [keybindings]  — global hotkey + close key
 #   [general]      — preferred text editor for "Open Config"
-#   [search]       — web engine, favicon service, indexed app dirs
 #   [aliases]      — user shortcuts, plain or parameterized
 
 # ---------------------------------------------------------------------------
@@ -239,14 +233,6 @@ web_search           = "google"
 
 show_system_commands = true          # Lock Screen, Sleep, Restart, ...
 show_path            = true          # show file path in result subtitle
-
-# Favicon service for URL aliases. Either a built-in shorthand or a URL
-# template containing {host}:
-#   "google"     — Google S2, up to 128px (best quality, default)
-#   "duckduckgo" — DDG icon service, 32px (privacy-friendlier, low-res)
-#   "iconhorse"  — icon.horse, returns site's largest icon
-#   "https://api.faviconkit.com/{host}/144"   # custom template
-# favicon_service     = "google"
 
 # Hide specific apps from the index (comma-separated, name as displayed):
 # excluded_apps      = Siri, News, Stocks
@@ -423,7 +409,6 @@ file_dirs            = ~/Documents, ~/Desktop, ~/Downloads
             case ("general", "editor"):      general.editor = value
             // Search
             case ("search", "web_search"):   search.webSearch = value
-            case ("search", "favicon_service"): search.faviconService = value
             case ("search", "show_system_commands"): search.showSystemCommands = (value == "true")
             case ("search", "show_path"):    search.showPath = (value == "true")
             case ("search", "excluded_apps"):
@@ -481,18 +466,6 @@ file_dirs            = ~/Documents, ~/Desktop, ~/Downloads
             if let s = preset.subtitle { theme.subtitle = s }
             if let b = preset.border { theme.border = b }
             print("Theme applied: \(themeName)")
-        }
-
-        // Update the favicon cache to whichever service the user picked
-        // and warm it for every URL alias so parameterized aliases pick up
-        // site icons without a startup-blocking fetch.
-        FaviconCache.shared.serviceTemplate = FaviconCache.template(for: search.faviconService)
-        let aliasHosts = aliases.values.compactMap { value -> String? in
-            guard value.hasPrefix("http://") || value.hasPrefix("https://") else { return nil }
-            return FaviconCache.hostname(for: value)
-        }
-        if !aliasHosts.isEmpty {
-            FaviconCache.shared.prefetch(hostnames: aliasHosts)
         }
 
         print("Config loaded from \(configURL.path)")

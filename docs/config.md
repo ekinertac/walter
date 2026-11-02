@@ -177,7 +177,6 @@ Behavior of the search engine, app indexer, and trailing fallback row.
 | `web_search`           | string | `"google"` | Web search target for the trailing fallback row. Name or URL template (see below). |
 | `show_system_commands` | bool   | `true`     | Surface Lock Screen / Sleep / Restart / etc. in results. |
 | `show_path`            | bool   | `true`     | Show file path as result subtitle. Hide for a cleaner list. |
-| `favicon_service`      | string | `"google"` | Where to fetch URL-alias favicons from (see below). |
 | `excluded_apps`        | csv    | `""`       | Comma-separated app display names to hide from the index. |
 | `app_dirs`             | csv    | `""`       | Extra directories to scan for `.app` bundles. `~` is expanded. |
 | `file_dirs`            | csv    | unset (= disabled)                    | Directories indexed for prefix-triggered file search. Fresh installs get `~/Documents, ~/Desktop, ~/Downloads` in the generated config. |
@@ -198,25 +197,6 @@ web_search = "https://you.com/search?q={query}"
 
 The trailing fallback row reads "Search <name> for …" — for URL
 templates the host name is shown.
-
-### `favicon_service`
-
-URL-alias rows show the target site's favicon. Walter caches images on
-disk under `~/.config/walter/.cache/favicons/` and refetches them when
-the service is changed.
-
-Built-in shorthands:
-
-- `"google"` — Google S2 at 128px. Highest resolution, recommended.
-- `"duckduckgo"` (or `"ddg"`) — DuckDuckGo's icon service, 32px.
-  Lower resolution but does not phone the user's alias hosts to Google.
-- `"iconhorse"` — icon.horse. Returns the site's largest published icon.
-
-Custom templates use `{host}`:
-
-```toml
-favicon_service = "https://api.faviconkit.com/{host}/144"
-```
 
 ### `excluded_apps`
 
@@ -358,7 +338,6 @@ Result rows then read **"YouTube → cat videos"** instead of
 | -------------------------------------------- | ------- |
 | `~/.config/walter/config.toml`               | Main config (this file). |
 | `~/.config/walter/themes/`                   | User-defined `*.theme` files. Auto-created with example. |
-| `~/.config/walter/.cache/favicons/`          | Cached favicons. Wiped automatically on `favicon_service` change. |
 | `~/.config/walter/frecency.json`             | App launch counts + last-launched timestamps. Affects ranking. |
 
 To start fresh, delete `~/.config/walter/` — the next launch recreates
