@@ -13,6 +13,8 @@ class KeyablePanel: NSPanel {
     var onCommandReturn: (() -> Void)? // Reveal a revalidated allowed app only.
     var closeBinding: HotkeyBinding?
     var onClose: (() -> Void)?
+    var onQuit: (() -> Void)?
+    var onConfigLocation: (() -> Void)?
     var onQuickSelect: ((Int) -> Void)?       // Cmd+1…9 → launch Nth result
     var onCopyResult: (() -> Bool)?           // Cmd+C → copy result; returns true if handled
 
@@ -32,6 +34,7 @@ class KeyablePanel: NSPanel {
     override func sendEvent(_ event: NSEvent) {
         let timing = event.type == .keyDown ? InputTiming.shared.beginKeyEvent(timestamp: event.timestamp) : nil
         defer { InputTiming.shared.endKeyEvent(timing) }
+        if handlePopupShortcut(event) { return }
         if event.type == .keyDown, closeBinding?.matches(event) == true {
             onClose?()
             return
@@ -39,7 +42,18 @@ class KeyablePanel: NSPanel {
         super.sendEvent(event)
     }
 
+    private func handlePopupShortcut(_ event: NSEvent) -> Bool {
+        guard event.type == .keyDown else { return false }
+        return PopupShortcuts.handle(characters: event.charactersIgnoringModifiers ?? "",
+            modifiers: event.modifierFlags, popupActive: isVisible && isKeyWindow,
+            quit: onQuit, showConfigLocation: onConfigLocation)
+    }
+
     override func performKeyEquivalent(with event: NSEvent) -> Bool {
+        // AppKit can consult other windows for key equivalents while an alert
+        // is key. Never route commands into the popup behind that alert.
+        guard isVisible && isKeyWindow else { return super.performKeyEquivalent(with: event) }
+        if handlePopupShortcut(event) { return true }
         // Only handle pure Command combos here; let everything else
         // (Cmd+Shift+…, Cmd+A/V/X text editing, etc.) flow to the responder
         // chain and the hidden Edit menu as before.

@@ -24,7 +24,8 @@ class LauncherPanelController: NSObject {
     private var isThemePicker = false
     var suppressConfigRebuild = false
 
-    init(config: ConfigManager, appIndex: AppIndex, symbolIndex: SymbolIndex) {
+    init(config: ConfigManager, appIndex: AppIndex, symbolIndex: SymbolIndex,
+         showConfigLocation: @escaping () -> Void) {
         self.config = config
         self.appIndex = appIndex
 
@@ -181,6 +182,8 @@ class LauncherPanelController: NSObject {
         searchField.delegate = self
         panel.closeBinding = (try? HotkeyBinding.parse(config.keybindings.close)) ?? (try? HotkeyBinding.parse("Escape"))
         panel.onClose = { [weak self] in self?.cancelSelection() }
+        panel.onQuit = { NSApp.terminate(nil) }
+        panel.onConfigLocation = showConfigLocation
 
         // Cmd-shortcuts arrive as key-equivalents, not editing commands, so
         // they're handled at the panel level rather than in doCommandBy:.
@@ -236,6 +239,16 @@ class LauncherPanelController: NSObject {
 
     func toggle() {
         panel.isVisible ? hide() : show()
+    }
+
+    /// Alert dismissal must not reveal a hidden/replaced popup or steal focus
+    /// from another app. Do not call show(), reset the query, or refresh results.
+    func restoreInputFocus() {
+        guard ConfigLocationPresenter.shouldRestoreFocus(popupVisible: panel.isVisible,
+            applicationActive: NSApp.isActive) else { return }
+        panel.makeKeyAndOrderFront(nil)
+        if let editor = searchField.currentEditor(), panel.firstResponder === editor { return }
+        panel.makeFirstResponder(searchField)
     }
 
     @objc private func appDidResignActive() {

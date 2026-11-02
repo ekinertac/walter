@@ -1,8 +1,8 @@
-// Application lifetime owns hotkeys and the app index, never a panel or tray.
+// Application lifetime owns hotkeys and indexes independently of popup rebuilds.
 import AppKit
 
 final class AppDelegate: NSObject, NSApplicationDelegate {
-    private var statusBar: StatusBarController?
+    private let configLocationPresenter = ConfigLocationPresenter()
     private var hotkeys: HotkeyManager?
     private var panel: LauncherPanelController!
     private var config: ConfigManager!
@@ -18,8 +18,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // Publish built-ins for subsequent lookups; completion must not reset a
         // visible selection. Neither snapshot preparation belongs to a panel.
         symbolIndex = SymbolIndex()
-        panel = LauncherPanelController(config: config, appIndex: appIndex, symbolIndex: symbolIndex)
-        statusBar = StatusBarController(config: config)
+        panel = LauncherPanelController(config: config, appIndex: appIndex, symbolIndex: symbolIndex,
+            showConfigLocation: { [weak self] in self?.showConfigLocation() })
         do {
             hotkeys = HotkeyManager(backend: try CarbonHotkeyBackend())
             configureHotkeys()
@@ -33,7 +33,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             let visible = self.panel.isVisible
             self.panel.hide()
             self.panel = LauncherPanelController(config: self.config, appIndex: self.appIndex,
-                symbolIndex: self.symbolIndex)
+                symbolIndex: self.symbolIndex,
+                showConfigLocation: { [weak self] in self?.showConfigLocation() })
             if visible { self.panel.show() }
         }
         // Always hidden at startup, including manual and macOS login launches.
@@ -69,6 +70,22 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         alert.alertStyle = .warning
         NSApp.activate(ignoringOtherApps: true)
         alert.runModal()
+    }
+
+    private func showConfigLocation() {
+        guard panel.isVisible else { return }
+        configLocationPresenter.show(configURL: config.configURL, present: { notice in
+            let alert = NSAlert()
+            alert.messageText = notice.title
+            alert.informativeText = notice.message
+            alert.alertStyle = .informational
+            alert.addButton(withTitle: "OK")
+            alert.addButton(withTitle: "Cancel") // Native Escape dismissal; neither button changes settings.
+            alert.runModal()
+        }, restoreFocus: { [weak self] in
+            // A config reload may have replaced the panel while the alert ran.
+            self?.panel.restoreInputFocus()
+        })
     }
 
     private func setupEditMenu() {
