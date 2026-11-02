@@ -41,26 +41,11 @@ class ConfigManager {
 
     struct Search {
         /// URL template (or named shorthand) used by the trailing
-        /// web-search fallback row. Named `webSearch` rather than
-        /// `engine` because the `[search]` section also configures
-        /// app indexing and file indexing — `engine` was ambiguous.
+        /// web-search fallback row.
         var webSearch: String = "google"
         var showPath: Bool = true
         var excludedApps: [String] = []
         var extraAppDirs: [String] = []
-        /// Directories indexed for prefix-triggered file search (e.g. ``foo``).
-        /// Empty disables file search entirely. The defaults live in the
-        /// generated config file, NOT here — Walter must never start
-        /// indexing a user's disk unless they've consented by listing the
-        /// directories explicitly in `~/.config/walter/config.toml`. That
-        /// way upgrading the app on an existing install never silently
-        /// expands what Walter is allowed to read.
-        var fileDirs: [String] = []
-        /// Single character that activates file-search mode when typed at
-        /// the start of the query. Defaults to backtick because it's easy
-        /// to reach on US/UK layouts and isn't shadowed by anything else
-        /// in the launcher's input vocabulary.
-        var filePrefix: String = "`"
     }
 
     struct General {
@@ -238,15 +223,6 @@ show_path            = true          # show file path in result subtitle
 # Extra directories to scan for .app bundles (comma-separated):
 # app_dirs           = /opt/myapps, ~/Tools
 
-# Directories indexed for prefix-triggered file search. Type `<prefix>foo`
-# to search filenames in these dirs only — outside of prefix mode the
-# file index is invisible so apps stay first-class. Set `file_dirs = `
-# (empty) to disable file search entirely.
-file_dirs            = ~/Documents, ~/Desktop, ~/Downloads
-# Single character that activates file-search mode (default: backtick).
-# Pick something you don't normally type at the start of a query.
-# file_prefix        = "`"
-
 # ---------------------------------------------------------------------------
 # Aliases
 # ---------------------------------------------------------------------------
@@ -416,20 +392,6 @@ file_dirs            = ~/Documents, ~/Desktop, ~/Downloads
                     $0.trimmingCharacters(in: .whitespaces)
                         .replacingOccurrences(of: "~", with: home)
                 }
-            case ("search", "file_dirs"):
-                // Path-only — `~` is expanded inside FileIndex itself so
-                // the original config value can stay portable across users.
-                let parsed = value.split(separator: ",").map {
-                    $0.trimmingCharacters(in: .whitespaces)
-                }
-                // Empty list = disable file search; treat the literal
-                // string "" the same way to give users an obvious off switch.
-                search.fileDirs = parsed.filter { !$0.isEmpty }
-            case ("search", "file_prefix"):
-                // Take the first character — quietly ignore longer values
-                // rather than failing the whole config load. A multi-char
-                // prefix would clash with normal typing too easily.
-                if let first = value.first { search.filePrefix = String(first) }
             // Aliases — flat form: `key = "value"`
             case ("aliases", _):
                 aliases[key] = value.trimmingCharacters(in: .whitespacesAndNewlines).hasPrefix("!") ? nil : value
