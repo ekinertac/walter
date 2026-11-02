@@ -9,12 +9,10 @@
 // and NSWorkspace.shared.open() launches Settings to the right pane.
 //
 // This file hardcodes the list of common panes (name, SF Symbol, URL).
-// Searched by fuzzy match. Surfaced by LauncherEngine between the system
-// commands group and the apps group.
+// Searched by ordinary fuzzy match alongside apps and aliases.
 //
 // Called by: LauncherEngine.search() on every keystroke.
-// Related: SystemCommands.swift (similar built-in actions),
-//          LauncherEngine.swift (search pipeline + .url action handler).
+// Related: LauncherEngine.swift (search pipeline + .url action handler).
 
 import AppKit
 

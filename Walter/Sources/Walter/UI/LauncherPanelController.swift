@@ -622,7 +622,7 @@ class LauncherPanelController: NSObject {
         case .openInEditor(let p): text = p
         case .url(let u):          text = u
         case .copy(let v):         text = v
-        case .systemCommand, .enterThemePicker, .applyTheme: text = nil
+        case .enterThemePicker, .applyTheme: text = nil
         }
         guard let text, !text.isEmpty else { return false }
         NSPasteboard.general.clearContents()

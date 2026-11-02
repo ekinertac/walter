@@ -4,8 +4,8 @@
 //   1. Calculator / converter answers — pinned to the top because they
 //      are computed answers, not search results, and there is nothing
 //      meaningful to score them against.
-//   2. A unified pool of fuzzy-scored results — apps, system commands,
-//      System Settings panes, aliases, and the "Change Theme" action all
+//   2. A unified pool of fuzzy-scored results — apps, System Settings
+//      panes, aliases, and the "Change Theme" action all
 //      compete in one ranked list. Apps additionally receive a frecency
 //      boost so frequently-launched apps win against equally-named items
 //      from other categories.
@@ -28,7 +28,6 @@ enum ResultAction {
     case copy(String)
     case url(String)
     case openInEditor(String)      // opens a file in the user's preferred editor
-    case systemCommand(SystemCommand)
     case enterThemePicker          // switches UI to theme browsing mode
     case applyTheme(String)        // applies a theme by name and writes to config
 }
@@ -41,7 +40,6 @@ class LauncherEngine {
     private let calculator = Calculator()
     private let converter = Converter()
     private let prefPanes = PrefPaneIndex()
-    private var systemCommands: SystemCommands!
     private weak var config: ConfigManager?
 
     /// Prefix character that activates file-search mode. Sourced from
@@ -54,7 +52,6 @@ class LauncherEngine {
 
     init(config: ConfigManager, extraAppDirs: [String] = [], onIndexChanged: @escaping () -> Void = {}) {
         self.config = config
-        systemCommands = SystemCommands(config: config)
         appIndex = AppIndex(extraDirs: extraAppDirs, onChange: onIndexChanged)
         fileIndex = FileIndex(dirs: config.search.fileDirs, onChange: onIndexChanged)
     }
@@ -109,11 +106,11 @@ class LauncherEngine {
             ))
         }
 
-        // ----- Scored pool: apps, sys cmds, panes, aliases, theme entry --
+        // ----- Scored pool: apps, panes, aliases, theme entry --
         // All searchable items live in a single ranked list keyed by the
         // fuzzy score against the query. Apps additionally receive a
         // frecency boost so a heavily-used app outranks an unrelated
-        // pane / alias / system command with the same prefix.
+        // pane / alias with the same prefix.
 
         // Aliases.
         //
@@ -194,20 +191,6 @@ class LauncherEngine {
                 action: .enterThemePicker
             )
             scored.append((result, Double(themeMatch.score)))
-        }
-
-        // System commands.
-        if config?.search.showSystemCommands != false {
-            for item in systemCommands.search(query: q) {
-                let icon = NSImage(systemSymbolName: item.command.iconName, accessibilityDescription: item.command.name)
-                let result = SearchResult(
-                    title: item.command.name,
-                    subtitle: item.command.subtitle,
-                    icon: icon,
-                    action: .systemCommand(item.command)
-                )
-                scored.append((result, Double(item.score)))
-            }
         }
 
         // System Settings panes.
@@ -418,11 +401,6 @@ class LauncherEngine {
                 withApplicationAt: URL(fileURLWithPath: editor),
                 configuration: NSWorkspace.OpenConfiguration()
             )
-        case .systemCommand(let cmd):
-            if cmd.needsConfirmation {
-                guard SystemCommands.confirm(action: cmd.name) else { return }
-            }
-            cmd.action()
         case .enterThemePicker, .applyTheme:
             // Handled by LauncherPanelController, not here
             break

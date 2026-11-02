@@ -45,7 +45,6 @@ class ConfigManager {
         /// `engine` because the `[search]` section also configures
         /// app indexing and file indexing — `engine` was ambiguous.
         var webSearch: String = "google"
-        var showSystemCommands: Bool = true
         var showPath: Bool = true
         var excludedApps: [String] = []
         var extraAppDirs: [String] = []
@@ -231,7 +230,6 @@ close = "Escape"                     # close (also unfocuses to previous app)
 #   web_search = "https://you.com/search?q={query}"
 web_search           = "google"
 
-show_system_commands = true          # Lock Screen, Sleep, Restart, ...
 show_path            = true          # show file path in result subtitle
 
 # Hide specific apps from the index (comma-separated, name as displayed):
@@ -407,7 +405,6 @@ file_dirs            = ~/Documents, ~/Desktop, ~/Downloads
             case ("general", "editor"):      general.editor = value
             // Search
             case ("search", "web_search"):   search.webSearch = value
-            case ("search", "show_system_commands"): search.showSystemCommands = (value == "true")
             case ("search", "show_path"):    search.showPath = (value == "true")
             case ("search", "excluded_apps"):
                 search.excludedApps = value.split(separator: ",").map {

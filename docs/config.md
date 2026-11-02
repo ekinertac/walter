@@ -87,7 +87,7 @@ Window geometry and result rendering.
 ### List vs grid mode
 
 - **`list`** — one row per result, icon + title + subtitle. Default.
-  Best for mixed content (calculator, conversions, system commands).
+  Best for mixed content (calculator, conversions, Settings panes).
 - **`grid`** — 5-column tile sheet, large icons with a single label.
   Caps at 3 rows = 15 tiles. Computed answers (calculator, conversions)
   appear as a banner above the grid; the web-search fallback appears as
@@ -175,7 +175,6 @@ Behavior of the search engine, app indexer, and trailing fallback row.
 | Key                    | Type   | Default    | Notes |
 | ---------------------- | ------ | ---------- | ----- |
 | `web_search`           | string | `"google"` | Web search target for the trailing fallback row. Name or URL template (see below). |
-| `show_system_commands` | bool   | `true`     | Surface Lock Screen / Sleep / Restart / etc. in results. |
 | `show_path`            | bool   | `true`     | Show file path as result subtitle. Hide for a cleaner list. |
 | `excluded_apps`        | csv    | `""`       | Comma-separated app display names to hide from the index. |
 | `app_dirs`             | csv    | `""`       | Extra directories to scan for `.app` bundles. `~` is expanded. |

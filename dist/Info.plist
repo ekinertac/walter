@@ -24,7 +24,5 @@
     <true/>
     <key>NSHighResolutionCapable</key>
     <true/>
-    <key>NSAppleEventsUsageDescription</key>
-    <string>Walter uses AppleScript for system commands like Lock Screen, Restart, and Toggle Dark Mode.</string>
 </dict>
 </plist>
