@@ -6,7 +6,7 @@
 //   - LauncherPanelController (the floating search window)
 //   - ConfigManager (TOML config loading + hot-reload)
 //
-// The panel is shown on first launch; after that, Alt+Space toggles it.
+// Walter starts hidden on every launch; only the launcher hotkey toggles the popup.
 
 import AppKit
 
@@ -31,11 +31,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         panel = LauncherPanelController(config: config)
 
         // Menu bar icon with Quit action
-        statusBar = StatusBarController(config: config, onToggle: { [weak self] in
-            self?.panel.toggle()
-        }, onQuit: {
-            NSApp.terminate(nil)
-        })
+        statusBar = StatusBarController(config: config)
 
         do {
             hotkeys = HotkeyManager(backend: try CarbonHotkeyBackend())
@@ -66,8 +62,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             print("UI rebuilt with new config")
         }
 
-        // Show the panel on first launch
-        panel.show()
+        // Always hidden at startup, including manual and macOS login launches.
     }
 
     private func configureHotkeys() {

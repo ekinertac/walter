@@ -1,17 +1,13 @@
 // StatusBarController.swift — Menu bar icon, theme picker, and settings
 
 import AppKit
-import ServiceManagement
 
 class StatusBarController {
 
     private let statusItem: NSStatusItem
-    private let onToggle: () -> Void
-    private var loginItem: NSMenuItem!
     private weak var config: ConfigManager?
 
-    init(config: ConfigManager, onToggle: @escaping () -> Void, onQuit: @escaping () -> Void) {
-        self.onToggle = onToggle
+    init(config: ConfigManager) {
         self.config = config
 
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.squareLength)
@@ -31,26 +27,10 @@ class StatusBarController {
 
         let menu = NSMenu()
 
-        let toggleItem = NSMenuItem(title: "Toggle Walter", action: #selector(toggleClicked), keyEquivalent: "")
-        toggleItem.target = self
-        menu.addItem(toggleItem)
-
-        menu.addItem(.separator())
-
         // Theme submenu
         let themeItem = NSMenuItem(title: "Change Theme", action: nil, keyEquivalent: "")
         themeItem.submenu = buildThemeMenu()
         menu.addItem(themeItem)
-
-        menu.addItem(.separator())
-
-        // Login item toggle
-        loginItem = NSMenuItem(title: "Launch at Login", action: #selector(loginItemToggled), keyEquivalent: "")
-        loginItem.target = self
-        if #available(macOS 13.0, *) {
-            loginItem.state = SMAppService.mainApp.status == .enabled ? .on : .off
-        }
-        menu.addItem(loginItem)
 
         menu.addItem(.separator())
 
@@ -140,26 +120,12 @@ class StatusBarController {
 
     // MARK: - Actions
 
-    @objc private func toggleClicked() {
-        onToggle()
-    }
-
     @objc private func themeSelected(_ sender: NSMenuItem) {
         guard let themeName = sender.representedObject as? String,
               config != nil else { return }
 
         // Write the theme name into config.toml — hot-reload picks it up.
         updateConfigFile(key: "name", value: "\"\(themeName)\"", section: "theme")
-    }
-
-    @objc private func loginItemToggled() {
-        if loginItem.state == .on {
-            LoginItemManager.disableLoginItem()
-            loginItem.state = .off
-        } else {
-            LoginItemManager.enableLoginItem()
-            loginItem.state = .on
-        }
     }
 
     @objc private func aboutClicked() {

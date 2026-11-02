@@ -240,3 +240,14 @@ results rather than recalling queries.
 
 Legacy `history.json` and `frecency.json` files are no longer read or written.
 Existing personal copies are left untouched; no automatic cleanup is performed.
+
+## Startup and login
+
+Walter starts hidden on every launch, including manual and login launches. Only
+the launcher hotkey shows/toggles the popup; config reload does not reveal a
+hidden popup. The retained tray offers themes, About, and Quit, not a launcher
+toggle or login setting. Explicit hotkey-registration error alerts may appear.
+
+To start Walter at login, add it yourself in macOS System Settings → General →
+Login Items. Walter does not register, query, or unregister login items.
+Existing registrations are left untouched; manage them in System Settings.
