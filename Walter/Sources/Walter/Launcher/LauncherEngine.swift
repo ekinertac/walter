@@ -26,7 +26,6 @@ enum ResultAction {
     case copy(String)
     case url(String)
     case settings(String)
-    case openInEditor(String)      // opens a file in the user's preferred editor
     case enterThemePicker          // switches UI to theme browsing mode
     case applyTheme(String)        // applies a theme by name and writes to config
 }
@@ -254,13 +253,6 @@ class LauncherEngine {
         case .copy(let text):
             NSPasteboard.general.clearContents()
             NSPasteboard.general.setString(text, forType: .string)
-        case .openInEditor(let path):
-            let editor = SystemCommands.resolveEditorPath(configured: config?.general.editor ?? "")
-            NSWorkspace.shared.open(
-                [URL(fileURLWithPath: path)],
-                withApplicationAt: URL(fileURLWithPath: editor),
-                configuration: NSWorkspace.OpenConfiguration()
-            )
         case .enterThemePicker, .applyTheme:
             // Handled by LauncherPanelController, not here
             break

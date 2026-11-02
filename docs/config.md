@@ -144,30 +144,6 @@ while the launcher is open:
 
 ---
 
-## `[general]`
-
-Miscellaneous preferences.
-
-| Key      | Type   | Default | Notes |
-| -------- | ------ | ------- | ----- |
-| `editor` | string | unset   | Path to the editor used by the **Open Config** action and `Cmd+,`. |
-
-When `editor` is unset (or points at a missing path), Walter scans for
-the first installed editor in this order:
-
-1. `/Applications/CotEditor.app`
-2. `/Applications/BBEdit.app`
-3. `/Applications/Sublime Text.app`
-4. `/Applications/Visual Studio Code.app`
-5. `/Applications/Cursor.app`
-6. `/Applications/Zed.app`
-7. `/Applications/Zed Preview.app`
-8. `/Applications/Nova.app`
-9. `/Applications/MacVim.app`
-10. `/System/Applications/TextEdit.app` (always present)
-
----
-
 ## `[search]`
 
 Behavior of the search engine, app indexer, and trailing fallback row.

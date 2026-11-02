@@ -596,7 +596,6 @@ class LauncherPanelController: NSObject {
         let text: String?
         switch result.action {
         case .openApp(let p):      text = AllowedApps().validatedURL(for: p)?.path
-        case .openInEditor(let p): text = p
         case .url(let u), .settings(let u): text = u
         case .copy(let v):         text = v
         case .enterThemePicker, .applyTheme: text = nil

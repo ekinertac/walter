@@ -47,14 +47,9 @@ class ConfigManager {
         var excludedApps: [String] = []
     }
 
-    struct General {
-        var editor: String = ""                 // path to preferred text editor, empty = auto-detect
-    }
-
     var theme = Theme()
     var layout = Layout()
     var keybindings = Keybindings()
-    var general = General()
     var search = Search()
     var aliases: [String: String] = [:]
     var aliasNames: [String: String] = [:]   // optional display name per alias key
@@ -104,7 +99,6 @@ class ConfigManager {
         theme = Theme()
         layout = Layout()
         keybindings = Keybindings()
-        general = General()
         search = Search()
         aliases = [:]
         aliasNames = [:]
@@ -155,7 +149,6 @@ class ConfigManager {
 #   [theme]        — colors, fonts, blur, corner radius
 #   [layout]       — window size, position, scale, list-vs-grid mode
 #   [keybindings]  — global hotkey + close key
-#   [general]      — preferred text editor for "Open Config"
 #   [aliases]      — user shortcuts, plain or parameterized
 
 # ---------------------------------------------------------------------------
@@ -213,16 +206,6 @@ mode        = "list"
 [keybindings]
 open  = "Alt+Space"                  # global toggle
 close = "Escape"                     # close (also unfocuses to previous app)
-
-# ---------------------------------------------------------------------------
-# General
-# ---------------------------------------------------------------------------
-# Preferred text editor for the "Open Config" action and Cmd+,.
-# Leave empty to auto-detect — Walter checks (in order):
-#   CotEditor, BBEdit, Sublime Text, VS Code, Cursor, Zed,
-#   Zed Preview, Nova, MacVim, then TextEdit as a last resort.
-[general]
-# editor = "/Applications/CotEditor.app"
 
 # ---------------------------------------------------------------------------
 # Search
@@ -393,9 +376,6 @@ show_path            = true          # show file path in result subtitle
             // Keybindings
             case ("keybindings", "open"):    keybindings.open = value
             case ("keybindings", "close"):   keybindings.close = value
-            // Search
-            // General
-            case ("general", "editor"):      general.editor = value
             // Search
             case ("search", "web_search"):   search.webSearch = value
             case ("search", "show_path"):    search.showPath = (value == "true")

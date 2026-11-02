@@ -52,11 +52,6 @@ class StatusBarController {
         }
         menu.addItem(loginItem)
 
-        // Open config file
-        let configItem = NSMenuItem(title: "Edit Config...", action: #selector(openConfig), keyEquivalent: ",")
-        configItem.target = self
-        menu.addItem(configItem)
-
         menu.addItem(.separator())
 
         let aboutItem = NSMenuItem(title: "About Walter", action: #selector(aboutClicked), keyEquivalent: "")
@@ -108,16 +103,6 @@ class StatusBarController {
             addThemeItem(to: menu, name: name, currentTheme: currentTheme)
         }
 
-        menu.addItem(.separator())
-
-        // Custom option
-        let customItem = NSMenuItem(title: "Custom (edit config)", action: #selector(openConfig), keyEquivalent: "")
-        customItem.target = self
-        if currentTheme == nil {
-            customItem.state = .on
-        }
-        menu.addItem(customItem)
-
         return menu
     }
 
@@ -165,11 +150,6 @@ class StatusBarController {
 
         // Write the theme name into config.toml — hot-reload picks it up.
         updateConfigFile(key: "name", value: "\"\(themeName)\"", section: "theme")
-    }
-
-    @objc private func openConfig() {
-        guard let config = config else { return }
-        NSWorkspace.shared.open(config.configURL)
     }
 
     @objc private func loginItemToggled() {

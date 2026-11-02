@@ -94,17 +94,6 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         }
     }
 
-    @objc private func openConfig() {
-        let configPath = config.configURL.path
-        let editorPath = SystemCommands.resolveEditorPath(configured: config.general.editor)
-
-        NSWorkspace.shared.open(
-            [URL(fileURLWithPath: configPath)],
-            withApplicationAt: URL(fileURLWithPath: editorPath),
-            configuration: NSWorkspace.OpenConfiguration()
-        )
-    }
-
     private func setupEditMenu() {
         let editMenu = NSMenu(title: "Edit")
         editMenu.addItem(withTitle: "Select All", action: #selector(NSText.selectAll(_:)), keyEquivalent: "a")
@@ -112,12 +101,6 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         editMenu.addItem(withTitle: "Paste", action: #selector(NSText.paste(_:)), keyEquivalent: "v")
         editMenu.addItem(withTitle: "Cut", action: #selector(NSText.cut(_:)), keyEquivalent: "x")
         editMenu.addItem(withTitle: "Undo", action: Selector(("undo:")), keyEquivalent: "z")
-        editMenu.addItem(.separator())
-
-        let prefsItem = NSMenuItem(title: "Open Config", action: #selector(openConfig), keyEquivalent: ",")
-        prefsItem.target = self
-        editMenu.addItem(prefsItem)
-
         let editMenuItem = NSMenuItem(title: "Edit", action: nil, keyEquivalent: "")
         editMenuItem.submenu = editMenu
 
