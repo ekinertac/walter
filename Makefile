@@ -21,4 +21,4 @@ install: build  ## Install Walter to /Applications
 	ditto dist/build/Walter.app /Applications/Walter.app
 
 test:  ## Run unit tests
-	swift test --package-path Walter
+	bash dist/test.sh
