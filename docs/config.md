@@ -135,7 +135,7 @@ while the launcher is open:
 | `Enter` | Launch / open / copy the selected result |
 | `Cmd+Enter` | Reveal the selected result in Finder (apps and file-search hits; falls back to the normal action for everything else) |
 | `Cmd+1` … `Cmd+9` | Jump to and activate the Nth visible result (hint shown on each row) |
-| `Cmd+C` | Copy the selected result's value — file/app path, alias URL, shell command, or computed answer. When text is selected in the search field, defers to normal text copy. |
+| `Cmd+C` | Copy the selected result's value — file/app path, alias URL, or computed answer. When text is selected in the search field, defers to normal text copy. |
 | `Cmd+V` | Paste into the search field |
 | `Tab` / `Shift+Tab` | Next / previous result |
 | `↑` / `↓` | Move selection (list and grid) |
@@ -285,20 +285,17 @@ Values can be:
 
 - **URL** (`http://…`, `https://…`) — opened in the default browser.
 - **App / file path** — opened via `NSWorkspace`.
-- **Shell command** — prefix with `!` to run via `/bin/sh -c`.
 
 Add `{query}` anywhere in the value to make the alias parameterized:
 
 ```toml
 [aliases]
-ip = "!curl -s ifconfig.me"
 y  = "https://www.youtube.com/results?search_query={query}"
 gh-s = "https://github.com/search?q={query}"
 ```
 
 Then type `y cat videos` — Walter substitutes `cat videos` for `{query}`,
-URL-encodes it for URL aliases, and fires. Shell aliases receive the
-text raw (so the alias author handles their own quoting).
+URL-encodes it for URL aliases, and fires.
 
 When a parameterized alias matches, Walter suppresses fuzzy app/pane
 matches for the same query — the user's intent is explicit. The
@@ -324,8 +321,10 @@ name = "Ask Claude"
 url  = "https://claude.ai/new?q={query}"
 ```
 
-The accepted value keys are `url`, `value`, `path`, and `cmd` — they all
+The accepted value keys are `url`, `value`, and `path` — they all
 populate the alias's value. `name` is always the optional display label.
+Legacy `!` commands (including whitespace-prefixed values) and `cmd` fields
+are rejected, not interpreted as paths or URLs.
 
 Result rows then read **"YouTube → cat videos"** instead of
 **"y → cat videos"**.

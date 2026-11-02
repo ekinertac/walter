@@ -622,7 +622,6 @@ class LauncherPanelController: NSObject {
         case .openInEditor(let p): text = p
         case .url(let u):          text = u
         case .copy(let v):         text = v
-        case .shell(let c):        text = c
         case .systemCommand, .enterThemePicker, .applyTheme: text = nil
         }
         guard let text, !text.isEmpty else { return false }

@@ -255,17 +255,15 @@ file_dirs            = ~/Documents, ~/Desktop, ~/Downloads
 # Type the key to fire the value. Values can be:
 #   - URLs        ("https://...")     — opened in default browser
 #   - App / file  ("/Applications/..., /Users/...")   — opened via NSWorkspace
-#   - Shell cmd   ("!curl -s example.com")            — run via /bin/sh -c
 #
 # Add {query} anywhere in the value to make the alias parameterized.
 # Type "<key> <text>" and <text> is substituted before firing. URL
-# aliases URL-encode the query; shell aliases pass it through raw.
+# aliases URL-encode the query.
 #
 # Flat form — alias key is the display name:
 [aliases]
 # gh    = "https://github.com"
 # mail  = "/System/Applications/Mail.app"
-# ip    = "!curl -s ifconfig.me"
 
 # Sub-table form — adds a friendly display name. The launcher UI reads
 # "YouTube → cat videos" instead of just "y → cat videos".
@@ -342,7 +340,7 @@ file_dirs            = ~/Documents, ~/Desktop, ~/Downloads
                 if raw.hasPrefix("aliases.") {
                     // Sub-table form: `[aliases.foo]` declares alias key `foo`
                     // and switches to a section that accepts `name = ...`
-                    // and `url = ...` (or the legacy `value`/`path`/`cmd`).
+                    // and `url = ...` (or the legacy `value`/`path`).
                     currentSection = "alias_subtable"
                     currentAliasKey = String(raw.dropFirst("aliases.".count))
                 } else {
@@ -436,7 +434,8 @@ file_dirs            = ~/Documents, ~/Desktop, ~/Downloads
                 // prefix would clash with normal typing too easily.
                 if let first = value.first { search.filePrefix = String(first) }
             // Aliases — flat form: `key = "value"`
-            case ("aliases", _):             aliases[key] = value
+            case ("aliases", _):
+                aliases[key] = value.trimmingCharacters(in: .whitespacesAndNewlines).hasPrefix("!") ? nil : value
             // Aliases — sub-table form: `[aliases.<key>]` then `name = ...` /
             // `url = ...`. The display name surfaces in the launcher UI so
             // a parameterized alias can read as e.g. "YouTube → cat videos"
@@ -445,9 +444,10 @@ file_dirs            = ~/Documents, ~/Desktop, ~/Downloads
                 if let k = currentAliasKey { aliasNames[k] = value }
             case ("alias_subtable", "url"),
                  ("alias_subtable", "value"),
-                 ("alias_subtable", "path"),
-                 ("alias_subtable", "cmd"):
-                if let k = currentAliasKey { aliases[k] = value }
+                 ("alias_subtable", "path"):
+                if let k = currentAliasKey {
+                    aliases[k] = value.trimmingCharacters(in: .whitespacesAndNewlines).hasPrefix("!") ? nil : value
+                }
             default: break
             }
         }

@@ -25,7 +25,6 @@ struct SearchResult {
 
 enum ResultAction {
     case open(String)
-    case shell(String)
     case copy(String)
     case url(String)
     case openInEditor(String)      // opens a file in the user's preferred editor
@@ -136,7 +135,8 @@ class LauncherEngine {
             if let firstSpace = q.firstIndex(of: " ") {
                 let key = String(q[..<firstSpace]).lowercased()
                 let rest = String(q[q.index(after: firstSpace)...]).trimmingCharacters(in: .whitespaces)
-                if let value = aliases[key], value.contains("{query}"), !rest.isEmpty {
+                if let value = aliases[key], value.contains("{query}"), !rest.isEmpty,
+                   !value.trimmingCharacters(in: .whitespacesAndNewlines).hasPrefix("!") {
                     let displayName = config?.aliasNames[key] ?? key
                     let result = makeParameterizedAliasResult(displayName: displayName, value: value, query: rest)
                     pinnedTop.append(result)
@@ -148,7 +148,7 @@ class LauncherEngine {
                 for (key, value) in aliases {
                     // Skip parameterized aliases when the user hasn't typed
                     // a query yet — showing them with no value is noise.
-                    if value.contains("{query}") { continue }
+                    if value.contains("{query}") || value.trimmingCharacters(in: .whitespacesAndNewlines).hasPrefix("!") { continue }
 
                     let match = fuzzyMatch(query: ql, target: key)
                     guard match.matched else { continue }
@@ -157,11 +157,7 @@ class LauncherEngine {
                     let action: ResultAction
                     let subtitle: String
 
-                    if value.hasPrefix("!") {
-                        let cmd = String(value.dropFirst())
-                        action = .shell(cmd)
-                        subtitle = "Run: \(cmd)"
-                    } else if value.hasPrefix("http://") || value.hasPrefix("https://") {
+                    if value.hasPrefix("http://") || value.hasPrefix("https://") {
                         action = .url(value)
                         subtitle = value
                     } else {
@@ -266,18 +262,14 @@ class LauncherEngine {
     }
 
     /// Builds a search result for the parameterized alias that just matched.
-    /// `value` is the raw alias value (URL, !shell, or path) with `{query}`
+    /// `value` is the raw alias value (URL or path) with `{query}`
     /// placeholders; `query` is the text the user typed after the alias key.
     private func makeParameterizedAliasResult(displayName: String, value: String, query: String) -> SearchResult {
         let action: ResultAction
         let subtitle: String
         var icon: NSImage? = NSImage(systemSymbolName: "link", accessibilityDescription: "Alias")
 
-        if value.hasPrefix("!") {
-            let cmd = String(value.dropFirst()).replacingOccurrences(of: "{query}", with: query)
-            action = .shell(cmd)
-            subtitle = "Run: \(cmd)"
-        } else if value.hasPrefix("http://") || value.hasPrefix("https://") {
+        if value.hasPrefix("http://") || value.hasPrefix("https://") {
             let encoded = query.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? query
             let url = value.replacingOccurrences(of: "{query}", with: encoded)
             action = .url(url)
@@ -416,11 +408,6 @@ class LauncherEngine {
             if let url = URL(string: urlString) {
                 NSWorkspace.shared.open(url)
             }
-        case .shell(let command):
-            let task = Process()
-            task.launchPath = "/bin/sh"
-            task.arguments = ["-c", command]
-            try? task.run()
         case .copy(let text):
             NSPasteboard.general.clearContents()
             NSPasteboard.general.setString(text, forType: .string)
