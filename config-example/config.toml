@@ -16,7 +16,7 @@ placeholder = "Search apps, calculate, convert..."
 mode = "list" # list | grid; fixed scale, top edge 30% down the pointer screen
 
 [keybindings]
-open = "Alt+Space"
+open = "Cmd+Space"
 close = "Escape"
 
 [search]

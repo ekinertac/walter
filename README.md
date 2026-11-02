@@ -18,7 +18,7 @@
 
 ## What Walter is
 
-A keystroke-fast, single-window launcher. You hit `Alt+Space`, you type a few letters, you launch an app or copy a number. That's it. Walter does the four things you actually use a launcher for and stops there:
+A keystroke-fast, single-window launcher. You hit `Cmd+Space`, you type a few letters, you launch an app or copy a number. That's it. Walter does the four things you actually use a launcher for and stops there:
 
 1. Launch apps and System Settings panes
 2. Compute things — calculator, unit conversions, currency conversions
@@ -93,7 +93,7 @@ locale, while numeric input uses `.` as decimal separator.
 - Draggable, position remembered across launches and across `scale` changes
 
 **Niceties**
-- Configurable global hotkey — Alt+Space by default, swap for anything (`Cmd+Space`, `Ctrl+Shift+K`)
+- Configurable global hotkey — Cmd+Space by default, swap for anything (`Alt+Space`, `Ctrl+Shift+K`)
 - Hotkey is consumed by a CGEventTap so it never leaks into the active app
 - Hot-reload config + themes — save and apply, no relaunch
 - Menu bar agent (no Dock icon), launch-at-login toggle
@@ -148,7 +148,7 @@ scale       = 1.0                      # 1.0 = default, 3.0 = huge
 mode        = "list"                   # list | grid (Spotlight-Tahoe tiles)
 
 [keybindings]
-open  = "Alt+Space"                    # any combo: Alt+Tab, Cmd+Space, Ctrl+Shift+K
+open  = "Cmd+Space"                    # any combo: Alt+Tab, Alt+Space, Ctrl+Shift+K
 
 [search]
 web_search      = "google"             # or any "https://...{query}..." template
@@ -163,7 +163,7 @@ url  = "https://www.youtube.com/results?search_query={query}"
 
 | Action | Key |
 |---|---|
-| Open/close launcher | Alt+Space (configurable) |
+| Open/close launcher | Cmd+Space (configurable) |
 | Navigate results | Tab / Shift+Tab / Arrow keys |
 | Recall last query | Up arrow on empty input (Down to step toward newer) |
 | Launch / copy result | Enter |

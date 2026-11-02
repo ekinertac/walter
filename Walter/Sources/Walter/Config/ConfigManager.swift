@@ -24,7 +24,7 @@ final class ConfigManager {
         var mode = "list"
     }
     struct Keybindings {
-        var open = "Alt+Space"
+        var open = "Cmd+Space"
         var close = "Escape"
     }
     struct Search {
@@ -124,7 +124,7 @@ final class ConfigManager {
     mode = "list" # list | grid
 
     [keybindings]
-    open = "Alt+Space"
+    open = "Cmd+Space"
     close = "Escape"
 
     [search]

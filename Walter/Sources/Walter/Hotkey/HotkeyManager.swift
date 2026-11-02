@@ -59,7 +59,7 @@ enum HotkeyError: Error, CustomStringConvertible {
     case invalid(String), duplicate, registration(Int32)
     var description: String {
         switch self {
-        case .invalid(let text): return "Invalid hotkey: \(text). Use a known key and modifiers, e.g. Alt+Space."
+        case .invalid(let text): return "Invalid hotkey: \(text). Use a known key and modifiers, e.g. Cmd+Space."
         case .duplicate: return "Hotkeys have duplicate names or normalized bindings (including the launcher)."
         case .registration(let status): return "macOS could not register the hotkey (OSStatus \(status)). It may be in use by another app or a system shortcut."
         }

@@ -7,6 +7,8 @@ struct ConfigTests {
     @Test func defaultsAndThemes() throws {
         let fixture = try TemporaryDirectory()
         let config = ConfigManager(configURL: fixture.file("config.toml"), watchForChanges: false)
+        #expect(ConfigManager.Keybindings().open == "Cmd+Space")
+        #expect(config.keybindings.open == "Cmd+Space")
         #expect(config.layout.width == 780)
         #expect(config.layout.mode == "list")
         #expect(config.layout.maxResults == 8)
@@ -16,6 +18,7 @@ struct ConfigTests {
         #expect(builtinThemes.count == 21)
         #expect(builtinThemes["dracula"]?.accent == "#bd93f9")
         let defaults = try String(contentsOf: config.configURL, encoding: .utf8)
+        #expect(defaults.contains("open = \"Cmd+Space\""))
         for removed in ["favicon_service", "file_dirs", "file_prefix", "app_dirs", "show_system_commands", "scale =", "position =", "[general]"] {
             #expect(!defaults.contains(removed))
         }
@@ -29,6 +32,8 @@ struct ConfigTests {
         scale = 4
         position = "top"
         mode = “grid” # smart quotes
+        [keybindings]
+        open = "Alt+Space"
         [search]
         favicon_service = "https://unused.invalid/{host}"
         file_dirs = /not-scanned
@@ -43,6 +48,7 @@ struct ConfigTests {
         """.write(to: url, atomically: true, encoding: .utf8)
         let config = ConfigManager(configURL: url, watchForChanges: false)
         #expect(config.search.webSearch == "duckduckgo")
+        #expect(config.keybindings.open == "Alt+Space") // Preserve existing custom bindings.
         #expect(config.layout.mode == "grid")
         #expect(config.s(100) == 100)
         #expect(config.aliases["example"] == "https://example.invalid/{query}")
@@ -50,6 +56,7 @@ struct ConfigTests {
         try "[layout]\nplaceholder = \"Reloaded\"\n".write(to: url, atomically: true, encoding: .utf8)
         config.reload()
         #expect(config.layout.placeholder == "Reloaded")
+        #expect(config.keybindings.open == "Cmd+Space") // Missing setting uses the default.
         #expect(config.aliases.isEmpty)
     }
 

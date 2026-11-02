@@ -19,6 +19,7 @@ struct HotkeyTests {
     @Test func normalizesAliasesAndOrder() throws {
         #expect(try HotkeyBinding.parse("Ctrl+Alt+Space") == HotkeyBinding.parse(" Option + Control + space "))
         #expect(try HotkeyBinding.parse("Cmd+Enter") == HotkeyBinding.parse("command+return"))
+        #expect(try HotkeyBinding.parse("Cmd+Space") == HotkeyBinding.parse("Command + Space"))
     }
     @Test(arguments: ["", "Alt+", "Alt+Unknown", "Alt+Space+A", "Alt+Alt+Space", "Option", "Ctrl++A"])
     func invalidBindingRejected(text: String) {
@@ -27,7 +28,7 @@ struct HotkeyTests {
     @Test func duplicatesAndLauncherConflictsRejected() throws {
         let backend = MockHotkeys()
         let manager = HotkeyManager(backend: backend)
-        let binding = try HotkeyBinding.parse("Alt+Space")
+        let binding = try HotkeyBinding.parse(ConfigManager.Keybindings().open)
         #expect(throws: (any Error).self) {
             try manager.replace(with: [.init(name: "launcher", binding: binding, action: {}),
                                        .init(name: "app", binding: binding, action: {})])
@@ -40,7 +41,7 @@ struct HotkeyTests {
     @Test func reloadRollbackDispatchReuseAndCleanup() throws {
         let backend = MockHotkeys()
         var first = 0, second = 0
-        let one = try HotkeyBinding.parse("Alt+Space")
+        let one = try HotkeyBinding.parse(ConfigManager.Keybindings().open)
         let two = try HotkeyBinding.parse("Ctrl+K")
         let three = try HotkeyBinding.parse("Ctrl+J")
         do {

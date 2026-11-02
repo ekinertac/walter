@@ -51,7 +51,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             // attempted only when no launcher has ever been registered.
             if !hasWorkingHotkey {
                 do {
-                    try hotkeys.replace(with: [.init(name: "launcher", binding: try HotkeyBinding.parse("Alt+Space"),
+                    try hotkeys.replace(with: [.init(name: "launcher", binding: try HotkeyBinding.parse(ConfigManager.Keybindings().open),
                         action: { [weak self] in self?.panel.toggle() })])
                     hasWorkingHotkey = true
                 } catch { showHotkeyError(error) }

@@ -93,7 +93,7 @@ available. Results are height-capped to that screen.
 
 | Key | Default | Behavior |
 | --- | --- | --- |
-| `open` | `"Alt+Space"` | Global launcher toggle, requires a modifier. |
+| `open` | `"Cmd+Space"` | Global launcher toggle, requires a modifier. |
 | `close` | `"Escape"` | Popup-local dismissal/cancel binding. Escape also remains normal cancel. |
 
 Modifiers: `Alt`/`Option`/`Opt`, `Cmd`/`Command`/`Super`, `Ctrl`/`Control`, `Shift`.
@@ -108,9 +108,12 @@ Accessibility or Input Monitoring access. Multiple registration IDs/action
 mappings are supported internally; **new app-hotkey config is deferred**.
 Duplicate names/normalized bindings (including launcher conflicts) are rejected.
 Reload stages new registrations before releasing old handles; failure retains
-working registrations. Startup may attempt the explicit default `Alt+Space`
-after displaying a config/registration error; failure is also reported. Walter
-does not alter Spotlight or other system shortcuts.
+working registrations. Startup may attempt the default `Cmd+Space` after
+displaying a config/registration error; failure is also reported. Cmd+Space is
+commonly assigned to Spotlight: change that shortcut yourself in System Settings
+or choose a different Walter binding. Walter does not alter system shortcuts.
+Existing config files retain their configured binding; the new default applies
+when the setting or config file is absent.
 
 Other local keys: Tab/Shift+Tab and arrows navigate results, Return activates,
 Cmd+1…9 activates a numbered result, Cmd+C copies an answer/URL or revalidated
