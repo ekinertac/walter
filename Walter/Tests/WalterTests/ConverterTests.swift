@@ -1,10 +1,11 @@
+import Foundation
 import Testing
 @testable import Walter
 
 @Suite("Converter")
 struct ConverterTests {
 
-    let converter = Converter()
+    let converter = Converter(locale: Locale(identifier: "en_US"))
 
     // MARK: - Unit conversion (no network needed)
 
@@ -43,6 +44,17 @@ struct ConverterTests {
     @Test func noTargetShowsAll() {
         let r = converter.convert(query: "10 km in")
         #expect(r.count > 1) // should show all length units
+    }
+
+    @Test(arguments: ["$100 in euro", "100 usd in try", "€50 in", "500 try in usd", "100 dollars to euros"])
+    func currencyQueriesReturnEmpty(query: String) {
+        #expect(converter.convert(query: query).isEmpty)
+    }
+
+    @Test func poundsRemainAWeightUnit() {
+        let results = converter.convert(query: "1 pound in kg")
+        #expect(results.count == 1)
+        #expect(results.first?.title.hasSuffix(" kg") == true)
     }
 
     @Test func nonsenseReturnsEmpty() {
