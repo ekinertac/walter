@@ -173,7 +173,7 @@ class LauncherPanelController: NSObject {
             resultsView.bottomAnchor.constraint(equalTo: vibrancyView.bottomAnchor),
         ])
 
-        launcher = LauncherEngine(config: config, extraAppDirs: config.search.extraAppDirs, onIndexChanged: { [weak self] in
+        launcher = LauncherEngine(config: config, onIndexChanged: { [weak self] in
             guard let self, self.panel.isVisible else { return }
             self.updateResults(query: self.searchField.stringValue)
         })
@@ -611,16 +611,16 @@ class LauncherPanelController: NSObject {
     }
 
     /// Cmd+C — copy the selected result's underlying value to the
-    /// clipboard: file/app path, alias URL, shell command, or computed
+    /// clipboard: revalidated app path, alias/Settings URL, or computed
     /// answer. Returns true if something was copied. The launcher hides
     /// afterward, matching the feel of completing an action.
     private func copySelectionValue() -> Bool {
         guard let result = resultsView.result(at: selectedIndex) else { return false }
         let text: String?
         switch result.action {
-        case .open(let p):         text = p
+        case .openApp(let p):      text = AllowedApps().validatedURL(for: p)?.path
         case .openInEditor(let p): text = p
-        case .url(let u):          text = u
+        case .url(let u), .settings(let u): text = u
         case .copy(let v):         text = v
         case .enterThemePicker, .applyTheme: text = nil
         }
@@ -632,26 +632,14 @@ class LauncherPanelController: NSObject {
         return true
     }
 
-    /// Reveals the selected result in Finder (Cmd+Return). Only results
-    /// backed by a filesystem path — apps and file-search hits — can be
-    /// revealed; for anything else (URLs, calculator answers, system
-    /// commands) we fall back to the normal action so the keystroke is
-    /// never a dead no-op.
+    /// Only revalidated allowed apps can be revealed in Finder.
     private func revealSelectionInFinder() {
         guard let result = resultsView.result(at: selectedIndex) else { return }
-        let path: String?
-        switch result.action {
-        case .open(let p):         path = p
-        case .openInEditor(let p): path = p
-        default:                   path = nil
-        }
-        guard let path else {
-            confirmSelection()
-            return
-        }
+        guard case .openApp(let path) = result.action else { confirmSelection(); return }
+        guard let url = AllowedApps().validatedURL(for: path) else { return }
         recordHistory()
         hide()
-        NSWorkspace.shared.activateFileViewerSelecting([URL(fileURLWithPath: path)])
+        NSWorkspace.shared.activateFileViewerSelecting([url])
     }
 }
 

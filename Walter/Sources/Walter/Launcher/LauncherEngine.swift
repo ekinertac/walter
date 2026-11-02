@@ -24,9 +24,10 @@ struct SearchResult {
 }
 
 enum ResultAction {
-    case open(String)
+    case openApp(String)
     case copy(String)
     case url(String)
+    case settings(String)
     case openInEditor(String)      // opens a file in the user's preferred editor
     case enterThemePicker          // switches UI to theme browsing mode
     case applyTheme(String)        // applies a theme by name and writes to config
@@ -35,15 +36,16 @@ enum ResultAction {
 class LauncherEngine {
 
     private let appIndex: AppIndex
+    private let apps = AllowedApps()
     private let frecency = FrecencyTracker()
     private let calculator = Calculator()
     private let converter = Converter()
     private let prefPanes = PrefPaneIndex()
     private weak var config: ConfigManager?
 
-    init(config: ConfigManager, extraAppDirs: [String] = [], onIndexChanged: @escaping () -> Void = {}) {
+    init(config: ConfigManager, onIndexChanged: @escaping () -> Void = {}) {
         self.config = config
-        appIndex = AppIndex(extraDirs: extraAppDirs, onChange: onIndexChanged)
+        appIndex = AppIndex(onChange: onIndexChanged)
     }
 
     /// Forwards a refresh request to the underlying app index. The
@@ -115,7 +117,7 @@ class LauncherEngine {
                 let key = String(q[..<firstSpace]).lowercased()
                 let rest = String(q[q.index(after: firstSpace)...]).trimmingCharacters(in: .whitespaces)
                 if let value = aliases[key], value.contains("{query}"), !rest.isEmpty,
-                   !value.trimmingCharacters(in: .whitespacesAndNewlines).hasPrefix("!") {
+                   BrowserURL.parse(value.replacingOccurrences(of: "{query}", with: "x")) != nil {
                     let displayName = config?.aliasNames[key] ?? key
                     let result = makeParameterizedAliasResult(displayName: displayName, value: value, query: rest)
                     pinnedTop.append(result)
@@ -127,7 +129,7 @@ class LauncherEngine {
                 for (key, value) in aliases {
                     // Skip parameterized aliases when the user hasn't typed
                     // a query yet — showing them with no value is noise.
-                    if value.contains("{query}") || value.trimmingCharacters(in: .whitespacesAndNewlines).hasPrefix("!") { continue }
+                    guard !value.contains("{query}"), ConfigManager.isAllowedAliasValue(value) else { continue }
 
                     let match = fuzzyMatch(query: ql, target: key)
                     guard match.matched else { continue }
@@ -136,11 +138,11 @@ class LauncherEngine {
                     let action: ResultAction
                     let subtitle: String
 
-                    if value.hasPrefix("http://") || value.hasPrefix("https://") {
+                    if BrowserURL.parse(value) != nil {
                         action = .url(value)
                         subtitle = value
                     } else {
-                        action = .open(value)
+                        action = .openApp(value)
                         subtitle = value
                     }
 
@@ -182,7 +184,7 @@ class LauncherEngine {
                 title: item.pane.name,
                 subtitle: "System Settings",
                 icon: icon,
-                action: .url(item.pane.url)
+                action: .settings(item.pane.url)
             )
             scored.append((result, Double(item.score)))
         }
@@ -209,7 +211,7 @@ class LauncherEngine {
                 title: entry.name,
                 subtitle: showPath ? entry.path : "",
                 icon: entry.icon,
-                action: .open(entry.path)
+                action: .openApp(entry.path)
             )
             scored.append((result, Double(match.score) + frecencyBoost))
         }
@@ -226,38 +228,18 @@ class LauncherEngine {
         return results
     }
 
-    /// Builds a search result for the parameterized alias that just matched.
-    /// `value` is the raw alias value (URL or path) with `{query}`
-    /// placeholders; `query` is the text the user typed after the alias key.
+    /// Only validated HTTP(S) templates can reach this helper.
     private func makeParameterizedAliasResult(displayName: String, value: String, query: String) -> SearchResult {
-        let action: ResultAction
-        let subtitle: String
-        var icon: NSImage? = NSImage(systemSymbolName: "link", accessibilityDescription: "Alias")
-
-        if value.hasPrefix("http://") || value.hasPrefix("https://") {
-            let encoded = query.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? query
-            let url = value.replacingOccurrences(of: "{query}", with: encoded)
-            action = .url(url)
-            subtitle = url
-        } else {
-            let path = value.replacingOccurrences(of: "{query}", with: query)
-            action = .open(path)
-            subtitle = path
-        }
-
-        return SearchResult(
-            title: "\(displayName) → \(query)",
-            subtitle: subtitle,
-            icon: icon,
-            action: action
-        )
+        let url = value.replacingOccurrences(of: "{query}", with: BrowserURL.encodeQuery(query))
+        return SearchResult(title: "\(displayName) → \(query)", subtitle: url,
+            icon: NSImage(systemSymbolName: "link", accessibilityDescription: "Alias"), action: .url(url))
     }
 
     /// Builds the trailing web-search fallback result. Honors the user's
     /// configured engine, which may be a built-in name (google/ddg/bing)
     /// or a full URL template containing `{query}`.
     private func makeWebFallback(query: String) -> SearchResult {
-        let encoded = query.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? query
+        let encoded = BrowserURL.encodeQuery(query)
         let engine = config?.search.webSearch ?? "google"
         let (engineName, webURL) = searchEngineURL(engine: engine, query: encoded)
         let webIcon = NSImage(systemSymbolName: "magnifyingglass.circle", accessibilityDescription: "Web search")
@@ -272,11 +254,15 @@ class LauncherEngine {
     /// Executes a result action and records frecency for app launches.
     func launch(result: SearchResult) {
         switch result.action {
-        case .open(let path):
-            frecency.recordLaunch(path: path)
-            NSWorkspace.shared.open(URL(fileURLWithPath: path))
+        case .openApp(let path):
+            apps.launch(path: path, open: { url in
+                self.frecency.recordLaunch(path: url.path)
+                NSWorkspace.shared.open(url)
+            })
         case .url(let urlString):
-            if let url = URL(string: urlString) {
+            if let url = BrowserURL.parse(urlString) { NSWorkspace.shared.open(url) }
+        case .settings(let value):
+            if prefPanes.panes.contains(where: { $0.url == value }), let url = URL(string: value) {
                 NSWorkspace.shared.open(url)
             }
         case .copy(let text):
@@ -396,7 +382,7 @@ class LauncherEngine {
     /// or a full URL template containing `{query}` — `query` is already
     /// URL-encoded by the caller.
     private func searchEngineURL(engine: String, query: String) -> (name: String, url: String) {
-        if engine.contains("{query}") {
+        if engine.contains("{query}"), BrowserURL.parse(engine.replacingOccurrences(of: "{query}", with: "x")) != nil {
             let url = engine.replacingOccurrences(of: "{query}", with: query)
             // Pretty-print the host so the result line reads "Search
             // youtube.com for ..." instead of repeating the full URL.
@@ -411,5 +397,19 @@ class LauncherEngine {
         default:
             return ("Google", "https://www.google.com/search?q=\(query)")
         }
+    }
+}
+
+/// Local URL construction/validation only; never resolves DNS or fetches data.
+enum BrowserURL {
+    static func parse(_ value: String) -> URL? {
+        guard let url = URL(string: value), ["http", "https"].contains(url.scheme?.lowercased() ?? ""),
+              let host = url.host, !host.isEmpty else { return nil }
+        return url
+    }
+
+    static func encodeQuery(_ query: String) -> String {
+        // Encode separators too, so typed '&' cannot inject another parameter.
+        query.addingPercentEncoding(withAllowedCharacters: CharacterSet.alphanumerics.union(CharacterSet(charactersIn: "-._~"))) ?? ""
     }
 }

@@ -12,7 +12,7 @@
 // Searched by ordinary fuzzy match alongside apps and aliases.
 //
 // Called by: LauncherEngine.search() on every keystroke.
-// Related: LauncherEngine.swift (search pipeline + .url action handler).
+// Related: LauncherEngine.swift (search pipeline + validated settings handoff).
 
 import AppKit
 
@@ -26,7 +26,7 @@ class PrefPaneIndex {
 
     /// Hardcoded list of System Settings panes. URLs verified on macOS 13–15.
     /// Order is alphabetical for predictable empty-query browsing.
-    private let panes: [PrefPane] = [
+    let panes: [PrefPane] = [
         PrefPane(name: "Accessibility", iconName: "figure.roll",
                  url: "x-apple.systempreferences:com.apple.preference.universalaccess"),
         PrefPane(name: "Appearance", iconName: "paintbrush",

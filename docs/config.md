@@ -135,7 +135,7 @@ while the launcher is open:
 | `Enter` | Launch / open / copy the selected result |
 | `Cmd+Enter` | Reveal the selected result in Finder (apps; falls back to the normal action for everything else) |
 | `Cmd+1` … `Cmd+9` | Jump to and activate the Nth visible result (hint shown on each row) |
-| `Cmd+C` | Copy the selected result's value — file/app path, alias URL, or computed answer. When text is selected in the search field, defers to normal text copy. |
+| `Cmd+C` | Copy the selected result's value — revalidated app path, alias/Settings URL, or computed answer. When text is selected in the search field, defers to normal text copy. |
 | `Cmd+V` | Paste into the search field |
 | `Tab` / `Shift+Tab` | Next / previous result |
 | `↑` / `↓` | Move selection (list and grid) |
@@ -177,7 +177,6 @@ Behavior of the search engine, app indexer, and trailing fallback row.
 | `web_search`           | string | `"google"` | Web search target for the trailing fallback row. Name or URL template (see below). |
 | `show_path`            | bool   | `true`     | Show file path as result subtitle. Hide for a cleaner list. |
 | `excluded_apps`        | csv    | `""`       | Comma-separated app display names to hide from the index. |
-| `app_dirs`             | csv    | `""`       | Extra directories to scan for `.app` bundles. `~` is expanded. |
 
 ### `web_search`
 
@@ -206,20 +205,10 @@ excluded_apps = Siri, News, Stocks
 For internal helper bundles that show up despite Walter's filters
 (rare), this is the escape hatch.
 
-### `app_dirs`
-
-Extra directories to scan in addition to `/Applications`,
-`/Applications/Utilities`, `/System/Applications`,
-`/System/Applications/Utilities`, `/System/Library/CoreServices`,
-`/System/Library/CoreServices/Applications`, `~/Applications`, and
-`/Applications/MacPorts`.
-
-```toml
-app_dirs = /opt/myapps, ~/Tools
-```
-
-Newly added directories are watched live — adding or removing a `.app`
-fires Walter's reindex within a second.
+Apps are discovered only under `/Applications`, including ordinary subfolders.
+Both lexical and resolved paths must stay inside that root. Embedded helpers,
+packages and escaping symlinks are excluded. App activation, path copying and
+Finder reveal revalidate the same boundary. Extra app roots are not supported.
 
 ---
 
@@ -230,9 +219,10 @@ User-defined shortcuts. Type the alias key in the launcher to fire it.
 Values can be:
 
 - **URL** (`http://…`, `https://…`) — opened in the default browser.
-- **App / file path** — opened via `NSWorkspace`.
+- **App path** — a real app whose resolved path remains inside `/Applications`.
+  Arbitrary files, outside-root apps, and parameterized app paths are rejected.
 
-Add `{query}` anywhere in the value to make the alias parameterized:
+Add `{query}` to an HTTP(S) URL to make the alias parameterized:
 
 ```toml
 [aliases]

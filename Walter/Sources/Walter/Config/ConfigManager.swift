@@ -45,7 +45,6 @@ class ConfigManager {
         var webSearch: String = "google"
         var showPath: Bool = true
         var excludedApps: [String] = []
-        var extraAppDirs: [String] = []
     }
 
     struct General {
@@ -69,6 +68,8 @@ class ConfigManager {
     }
 
     var onChange: (() -> Void)?
+    let configURL: URL
+    private let apps: AllowedApps
     private var fileMonitor: DispatchSourceFileSystemObject?
     private var themesMonitor: DispatchSourceFileSystemObject?
 
@@ -76,25 +77,22 @@ class ConfigManager {
         base * CGFloat(layout.scale)
     }
 
-    init() {
+    init(configURL: URL? = nil, watchForChanges: Bool = true, apps: AllowedApps = AllowedApps()) {
+        self.configURL = configURL ?? ProcessInfo.processInfo.environment["WALTER_CONFIG"].map { URL(fileURLWithPath: $0) }
+            ?? FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(".config/walter/config.toml")
+        self.apps = apps
         ensureConfigExists()
         ensureUserThemesDirExists()
         load()
-        startWatching()
-        startWatchingThemes()
+        if watchForChanges {
+            startWatching()
+            startWatchingThemes()
+        }
     }
 
     deinit {
         stopWatching()
         stopWatchingThemes()
-    }
-
-    var configURL: URL {
-        if let env = ProcessInfo.processInfo.environment["WALTER_CONFIG"] {
-            return URL(fileURLWithPath: env)
-        }
-        return FileManager.default.homeDirectoryForCurrentUser
-            .appendingPathComponent(".config/walter/config.toml")
     }
 
     /// Directory containing user-defined `*.theme` files.
@@ -114,6 +112,28 @@ class ConfigManager {
         load()
         print("Config hot-reloaded")
         DispatchQueue.main.async { [weak self] in self?.onChange?() }
+    }
+
+    // Pure preliminary guard. App existence and resolved boundaries are checked
+    // during config loading and again at activation, not on each keystroke.
+    static func isAllowedAliasValue(_ value: String, appRoot: String = "/Applications") -> Bool {
+        guard !value.trimmingCharacters(in: .whitespacesAndNewlines).hasPrefix("!") else { return false }
+        if value.contains("{query}") {
+            return BrowserURL.parse(value.replacingOccurrences(of: "{query}", with: "x")) != nil
+        }
+        return BrowserURL.parse(value) != nil ||
+            (value.hasPrefix(appRoot + "/") && value.lowercased().hasSuffix(".app") && !value.contains("/../"))
+    }
+
+    private func storeAlias(_ key: String, _ value: String) {
+        let browser = BrowserURL.parse(value.replacingOccurrences(of: "{query}", with: "x")) != nil
+        if !value.trimmingCharacters(in: .whitespacesAndNewlines).hasPrefix("!"), browser {
+            aliases[key.lowercased()] = value
+        } else if !value.contains("{query}"), let url = apps.validatedURL(for: value) {
+            aliases[key.lowercased()] = url.path
+        } else {
+            aliases.removeValue(forKey: key.lowercased())
+        }
     }
 
     // MARK: - First-run default config
@@ -220,15 +240,12 @@ show_path            = true          # show file path in result subtitle
 # Hide specific apps from the index (comma-separated, name as displayed):
 # excluded_apps      = Siri, News, Stocks
 
-# Extra directories to scan for .app bundles (comma-separated):
-# app_dirs           = /opt/myapps, ~/Tools
-
 # ---------------------------------------------------------------------------
 # Aliases
 # ---------------------------------------------------------------------------
 # Type the key to fire the value. Values can be:
 #   - URLs        ("https://...")     — opened in default browser
-#   - App / file  ("/Applications/..., /Users/...")   — opened via NSWorkspace
+#   - App under /Applications — validated again before activation
 #
 # Add {query} anywhere in the value to make the alias parameterized.
 # Type "<key> <text>" and <text> is substituted before firing. URL
@@ -237,7 +254,7 @@ show_path            = true          # show file path in result subtitle
 # Flat form — alias key is the display name:
 [aliases]
 # gh    = "https://github.com"
-# mail  = "/System/Applications/Mail.app"
+# example = "/Applications/Example.app"
 
 # Sub-table form — adds a friendly display name. The launcher UI reads
 # "YouTube → cat videos" instead of just "y → cat videos".
@@ -386,15 +403,9 @@ show_path            = true          # show file path in result subtitle
                 search.excludedApps = value.split(separator: ",").map {
                     $0.trimmingCharacters(in: .whitespaces)
                 }
-            case ("search", "app_dirs"):
-                let home = FileManager.default.homeDirectoryForCurrentUser.path
-                search.extraAppDirs = value.split(separator: ",").map {
-                    $0.trimmingCharacters(in: .whitespaces)
-                        .replacingOccurrences(of: "~", with: home)
-                }
             // Aliases — flat form: `key = "value"`
             case ("aliases", _):
-                aliases[key] = value.trimmingCharacters(in: .whitespacesAndNewlines).hasPrefix("!") ? nil : value
+                storeAlias(key, value)
             // Aliases — sub-table form: `[aliases.<key>]` then `name = ...` /
             // `url = ...`. The display name surfaces in the launcher UI so
             // a parameterized alias can read as e.g. "YouTube → cat videos"
@@ -405,7 +416,7 @@ show_path            = true          # show file path in result subtitle
                  ("alias_subtable", "value"),
                  ("alias_subtable", "path"):
                 if let k = currentAliasKey {
-                    aliases[k] = value.trimmingCharacters(in: .whitespacesAndNewlines).hasPrefix("!") ? nil : value
+                    storeAlias(k, value)
                 }
             default: break
             }
