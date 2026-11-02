@@ -21,7 +21,6 @@ class LauncherPanelController: NSObject {
     private var selectedIndex = 0
     private var previousApp: NSRunningApplication?
     private var isThemePicker = false
-    private let history = History()
     private var themeBeforePicker: String?
     var suppressConfigRebuild = false
 
@@ -217,9 +216,6 @@ class LauncherPanelController: NSObject {
         if frontmost?.bundleIdentifier != Bundle.main.bundleIdentifier {
             previousApp = frontmost
         }
-        // Every fresh open starts at "newest" — so the first Up press
-        // recalls the most recent query, the second goes one back, etc.
-        history.resetCursor()
         // Re-scan the app index every time the launcher opens. FSEvents
         // usually keeps it current, but agent-app suspension can let a
         // freshly-installed app slip past until something else triggers
@@ -539,28 +535,9 @@ class LauncherPanelController: NSObject {
         default:
             // Hide first so the panel disappears instantly on selection,
             // then launch async so NSWorkspace.open() doesn't stall the UI.
-            recordHistory()
             hide()
             DispatchQueue.main.async { self.launcher.launch(result: result) }
         }
-    }
-
-    /// Records the current query into history. Skipped while the theme
-    /// picker is active (its query is a transient filter, not something
-    /// the user wants to recall later).
-    private func recordHistory() {
-        guard !isThemePicker else { return }
-        history.push(searchField.stringValue)
-    }
-
-    /// Programmatically replaces the input with a recalled history entry
-    /// and re-runs search. Assigning to `stringValue` does NOT fire
-    /// `controlTextDidChange`, so it won't reset the history cursor —
-    /// the user can keep stepping with subsequent Up/Down presses.
-    private func setQueryFromHistory(_ query: String) {
-        searchField.stringValue = query
-        adjustInputFontSize()
-        updateResults(query: query)
     }
 
     /// Shrinks the search input's font when the text is wider than the
@@ -627,7 +604,6 @@ class LauncherPanelController: NSObject {
         guard let text, !text.isEmpty else { return false }
         NSPasteboard.general.clearContents()
         NSPasteboard.general.setString(text, forType: .string)
-        recordHistory()
         hide()
         return true
     }
@@ -637,7 +613,6 @@ class LauncherPanelController: NSObject {
         guard let result = resultsView.result(at: selectedIndex) else { return }
         guard case .openApp(let path) = result.action else { confirmSelection(); return }
         guard let url = AllowedApps().validatedURL(for: path) else { return }
-        recordHistory()
         hide()
         NSWorkspace.shared.activateFileViewerSelecting([url])
     }
@@ -647,9 +622,6 @@ class LauncherPanelController: NSObject {
 
 extension LauncherPanelController: NSTextFieldDelegate {
     func controlTextDidChange(_ obj: Notification) {
-        // Any real keystroke exits history navigation — subsequent Up/Down
-        // go back to moving the result selection.
-        history.resetCursor()
         adjustInputFontSize()
         updateResults(query: searchField.stringValue)
     }
@@ -684,26 +656,9 @@ extension LauncherPanelController: NSTextFieldDelegate {
             moveSelection(by: -1); return true
         }
         if commandSelector == #selector(NSResponder.moveDown(_:)) {
-            // History navigation only kicks in when the input is empty
-            // (or we're already paging through history). As soon as the
-            // user types, Down goes back to moving the result selection.
-            if (searchField.stringValue.isEmpty || history.isNavigating) && !isThemePicker {
-                if let entry = history.next() {
-                    setQueryFromHistory(entry)
-                    return true
-                }
-                return true   // swallow; nothing newer than current state
-            }
             moveSelection(dx: 0, dy: 1); return true
         }
         if commandSelector == #selector(NSResponder.moveUp(_:)) {
-            if (searchField.stringValue.isEmpty || history.isNavigating) && !isThemePicker {
-                if let entry = history.previous() {
-                    setQueryFromHistory(entry)
-                    return true
-                }
-                return true   // swallow when history is empty
-            }
             moveSelection(dx: 0, dy: -1); return true
         }
         // Only intercept horizontal arrows when in grid mode AND a tile

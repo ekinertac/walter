@@ -6,9 +6,7 @@
 //      meaningful to score them against.
 //   2. A unified pool of fuzzy-scored results — apps, System Settings
 //      panes, aliases, and the "Change Theme" action all
-//      compete in one ranked list. Apps additionally receive a frecency
-//      boost so frequently-launched apps win against equally-named items
-//      from other categories.
+//      compete in one ranked list using ordinary fuzzy matching.
 //   3. Web search fallback — always pinned to the bottom so the user can
 //      always escape to a web query.
 //
@@ -37,7 +35,6 @@ class LauncherEngine {
 
     private let appIndex: AppIndex
     private let apps = AllowedApps()
-    private let frecency = FrecencyTracker()
     private let calculator = Calculator()
     private let converter = Converter()
     private let prefPanes = PrefPaneIndex()
@@ -92,9 +89,7 @@ class LauncherEngine {
 
         // ----- Scored pool: apps, panes, aliases, theme entry --
         // All searchable items live in a single ranked list keyed by the
-        // fuzzy score against the query. Apps additionally receive a
-        // frecency boost so a heavily-used app outranks an unrelated
-        // pane / alias with the same prefix.
+        // fuzzy score against the query, without launch tracking or usage boosts.
 
         // Aliases.
         //
@@ -189,34 +184,26 @@ class LauncherEngine {
             scored.append((result, Double(item.score)))
         }
 
-        // Apps with frecency boost.
-        // The boost is capped so heavy use of one app cannot drown out a
-        // better-matching different app. Without the cap, opening the
-        // launcher and typing "to" while Stremio has been launched
-        // dozens of times would always surface Stremio above Tolaria,
-        // even though "to" is a clean prefix of Tolaria and a poor
-        // scattered match in Stremio. The cap is comparable to the
-        // prefix-match bonus, so frecency tunes ranking among similar
-        // matches but cannot overwhelm a clearly stronger candidate.
+        // Apps, ranked only by the current query and candidate name.
         let excluded = Set(config?.search.excludedApps.map { $0.lowercased() } ?? [])
         let showPath = config?.search.showPath ?? true
-        let maxFrecencyBoost: Double = 40
         for entry in appIndex.allEntries {
             if excluded.contains(entry.nameLower) { continue }
             let match = fuzzyMatch(query: q, target: entry.name)
             guard match.matched else { continue }
-            let rawBoost = frecency.score(for: entry.path) * 10
-            let frecencyBoost = min(rawBoost, maxFrecencyBoost)
             let result = SearchResult(
                 title: entry.name,
                 subtitle: showPath ? entry.path : "",
                 icon: entry.icon,
                 action: .openApp(entry.path)
             )
-            scored.append((result, Double(match.score) + frecencyBoost))
+            scored.append((result, Double(match.score)))
         }
 
-        scored.sort { $0.score > $1.score }
+        scored.sort {
+            if $0.score != $1.score { return $0.score > $1.score }
+            return $0.result.title.localizedCaseInsensitiveCompare($1.result.title) == .orderedAscending
+        }
 
         var results = pinnedTop
         results += scored.prefix(25).map { $0.result }
@@ -251,12 +238,11 @@ class LauncherEngine {
         )
     }
 
-    /// Executes a result action and records frecency for app launches.
+    /// Executes a result action without recording query or usage data.
     func launch(result: SearchResult) {
         switch result.action {
         case .openApp(let path):
             apps.launch(path: path, open: { url in
-                self.frecency.recordLaunch(path: url.path)
                 NSWorkspace.shared.open(url)
             })
         case .url(let urlString):

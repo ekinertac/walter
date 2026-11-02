@@ -273,7 +273,10 @@ Result rows then read **"YouTube → cat videos"** instead of
 | -------------------------------------------- | ------- |
 | `~/.config/walter/config.toml`               | Main config (this file). |
 | `~/.config/walter/themes/`                   | User-defined `*.theme` files. Auto-created with example. |
-| `~/.config/walter/frecency.json`             | App launch counts + last-launched timestamps. Affects ranking. |
 
-To start fresh, delete `~/.config/walter/` — the next launch recreates
-defaults.
+Walter does not record queries or app usage. Results use ordinary fuzzy
+matching, with alphabetical title ordering for equal scores; Up/Down navigate
+results rather than recalling queries.
+
+Legacy `history.json` and `frecency.json` files are no longer read or written.
+Existing personal copies are left untouched; no automatic cleanup is performed.
