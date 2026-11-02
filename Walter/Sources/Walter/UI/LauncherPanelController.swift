@@ -177,6 +177,8 @@ class LauncherPanelController: NSObject {
         }
 
         searchField.delegate = self
+        panel.closeBinding = (try? HotkeyBinding.parse(config.keybindings.close)) ?? (try? HotkeyBinding.parse("Escape"))
+        panel.onClose = { [weak self] in self?.cancelSelection() }
 
         // Cmd-shortcuts arrive as key-equivalents, not editing commands, so
         // they're handled at the panel level rather than in doCommandBy:.
@@ -455,6 +457,22 @@ class LauncherPanelController: NSObject {
         }
     }
 
+    private func cancelSelection() {
+        if isThemePicker {
+            if let original = themeBeforePicker {
+                previewTheme(original)
+            }
+            suppressConfigRebuild = false
+            themeBeforePicker = nil
+            isThemePicker = false
+            searchField.stringValue = ""
+            setPlaceholder(config.layout.placeholder)
+            updateResults(query: "")
+        } else {
+            hide()
+        }
+    }
+
     private func confirmSelection() {
         guard let result = resultsView.result(at: selectedIndex) else { return }
 
@@ -569,19 +587,7 @@ extension LauncherPanelController: NSTextFieldDelegate {
 
     func control(_ control: NSControl, textView: NSTextView, doCommandBy commandSelector: Selector) -> Bool {
         if commandSelector == #selector(NSResponder.cancelOperation(_:)) {
-            if isThemePicker {
-                if let original = themeBeforePicker {
-                    previewTheme(original)
-                }
-                suppressConfigRebuild = false
-                themeBeforePicker = nil
-                isThemePicker = false
-                searchField.stringValue = ""
-                setPlaceholder(config.layout.placeholder)
-                updateResults(query: "")
-            } else {
-                hide()
-            }
+            cancelSelection()
             return true
         }
         if commandSelector == #selector(NSResponder.insertNewline(_:)) {

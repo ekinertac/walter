@@ -4,7 +4,7 @@
 // main menu bar. The lifecycle is:
 //   1. NSApp launches as an accessory (agent) app
 //   2. StatusBarController creates the menu bar icon
-//   3. HotkeyManager registers Alt+Space via NSEvent.addGlobalMonitorForEvents
+//   3. HotkeyManager registers the launcher binding via Carbon RegisterEventHotKey
 //   4. The launcher panel is shown immediately on first launch
 //   5. ESC hides the panel; Alt+Space toggles it; tray Quit exits
 //

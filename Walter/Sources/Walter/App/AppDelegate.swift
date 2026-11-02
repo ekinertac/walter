@@ -13,7 +13,7 @@ import AppKit
 class AppDelegate: NSObject, NSApplicationDelegate {
 
     private var statusBar: StatusBarController!
-    private var hotkey: HotkeyManager!
+    private var hotkeys: HotkeyManager?
     private var panel: LauncherPanelController!
     private var config: ConfigManager!
 
@@ -37,16 +37,10 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             NSApp.terminate(nil)
         })
 
-        // Check Accessibility permission — required for the global hotkey.
-        // When running as a .app bundle, Walter itself needs the permission
-        // (unlike swift run, which piggybacks on Terminal's permission).
-        requestAccessibilityIfNeeded()
-
-        // Global hotkey from config (e.g. "Alt+Space", "Alt+Tab", "Ctrl+Space")
-        let (keyCode, modifiers) = HotkeyManager.parseBinding(config.keybindings.open)
-        hotkey = HotkeyManager(keyCode: keyCode, modifiers: modifiers) { [weak self] in
-            self?.panel.toggle()
-        }
+        do {
+            hotkeys = HotkeyManager(backend: try CarbonHotkeyBackend())
+            configureHotkeys()
+        } catch { showHotkeyError(error) }
 
         setupEditMenu()
 
@@ -56,12 +50,8 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         config.onChange = { [weak self] in
             guard let self else { return }
 
-            // Always rebind hotkey — even during theme preview the user
-            // might have changed keybindings in another editor window.
-            let (kc, mods) = HotkeyManager.parseBinding(self.config.keybindings.open)
-            self.hotkey = HotkeyManager(keyCode: kc, modifiers: mods) { [weak self] in
-                self?.panel.toggle()
-            }
+            // Registrations survive theme preview and panel replacement.
+            self.configureHotkeys()
 
             // Skip panel rebuild during theme preview (the panel updates
             // colors directly via previewTheme).
@@ -80,18 +70,36 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         panel.show()
     }
 
-    /// Prompts for Accessibility permission if not already granted.
-    /// Uses AXIsProcessTrustedWithOptions which shows the native macOS dialog
-    /// ("Walter would like to control this computer") on first run.
-    private func requestAccessibilityIfNeeded() {
-        let trusted = AXIsProcessTrusted()
-        if !trusted {
-            let options = [kAXTrustedCheckOptionPrompt.takeUnretainedValue(): true] as CFDictionary
-            AXIsProcessTrustedWithOptions(options)
-            print("Accessibility: not granted — prompting user")
-        } else {
-            print("Accessibility: granted")
+    private func configureHotkeys() {
+        guard let hotkeys else { return }
+        do {
+            let binding = try HotkeyBinding.parse(config.keybindings.open)
+            _ = try HotkeyBinding.parse(config.keybindings.close)
+            try hotkeys.replace(with: [.init(name: "launcher", binding: binding, action: { [weak self] in self?.panel.toggle() })])
+        } catch {
+            showHotkeyError(error)
+            // On startup install the default if possible. On reload this is
+            // attempted only when no launcher has ever been registered.
+            if !hasWorkingHotkey {
+                do {
+                    try hotkeys.replace(with: [.init(name: "launcher", binding: try HotkeyBinding.parse("Alt+Space"),
+                        action: { [weak self] in self?.panel.toggle() })])
+                    hasWorkingHotkey = true
+                } catch { showHotkeyError(error) }
+            }
+            return
         }
+        hasWorkingHotkey = true
+    }
+    private var hasWorkingHotkey = false
+
+    private func showHotkeyError(_ error: Error) {
+        let alert = NSAlert()
+        alert.messageText = "Walter hotkey registration failed"
+        alert.informativeText = "\(error)\n\nEdit \(config.configURL.path). A previously working launcher binding is kept when possible. Walter does not change system shortcuts."
+        alert.alertStyle = .warning
+        NSApp.activate(ignoringOtherApps: true)
+        alert.runModal()
     }
 
     private func setupEditMenu() {

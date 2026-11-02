@@ -11,6 +11,8 @@ class KeyablePanel: NSPanel {
     // unhandled Cmd+Return just beeps. We intercept the launcher's Cmd
     // shortcuts here and forward to the controller.
     var onCommandReturn: (() -> Void)?        // Cmd+Return → reveal in Finder
+    var closeBinding: HotkeyBinding?
+    var onClose: (() -> Void)?
     var onQuickSelect: ((Int) -> Void)?       // Cmd+1…9 → launch Nth result
     var onCopyResult: (() -> Bool)?           // Cmd+C → copy result; returns true if handled
 
@@ -21,6 +23,14 @@ class KeyablePanel: NSPanel {
     override var isMovable: Bool {
         get { false }
         set {}
+    }
+
+    override func sendEvent(_ event: NSEvent) {
+        if event.type == .keyDown, closeBinding?.matches(event) == true {
+            onClose?()
+            return
+        }
+        super.sendEvent(event)
     }
 
     override func performKeyEquivalent(with event: NSEvent) -> Bool {

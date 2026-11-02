@@ -100,49 +100,33 @@ available. Results are height-capped to that screen.
 
 ## `[keybindings]`
 
-Global hotkeys.
+| Key | Default | Behavior |
+| --- | --- | --- |
+| `open` | `"Alt+Space"` | Global launcher toggle, requires a modifier. |
+| `close` | `"Escape"` | Popup-local dismissal/cancel binding. Escape also remains normal cancel. |
 
-| Key     | Type   | Default       | Notes |
-| ------- | ------ | ------------- | ----- |
-| `open`  | string | `"Alt+Space"` | Toggle the launcher visibility. |
-| `close` | string | `"Escape"`    | Hide the launcher and restore focus to the previous app. |
+Modifiers: `Alt`/`Option`/`Opt`, `Cmd`/`Command`/`Super`, `Ctrl`/`Control`, `Shift`.
+Keys: A–Z, 0–9, F1–F12, Space, Tab, Return/Enter, Escape/Esc,
+Delete/Backspace, Up, Down, Left, Right. Key codes follow the macOS virtual-key
+layout. Binding names are case-insensitive; spaces surrounding `+` are ignored.
+Unknown keys, multiple keys, repeated modifiers, missing keys, and empty `+`
+components are rejected. There is no fallback from an unknown key to Space.
 
-### Syntax
+Carbon registrations work globally, including when Walter is active, without
+Accessibility or Input Monitoring access. Multiple registration IDs/action
+mappings are supported internally; **new app-hotkey config is deferred**.
+Duplicate names/normalized bindings (including launcher conflicts) are rejected.
+Reload stages new registrations before releasing old handles; failure retains
+working registrations. Startup may attempt the explicit default `Alt+Space`
+after displaying a config/registration error; failure is also reported. Walter
+does not alter Spotlight or other system shortcuts.
 
-`<Modifier>+<Modifier>+<Key>`. Modifiers and keys are case-insensitive.
-
-- **Modifiers:** `Alt` / `Option`, `Cmd` / `Command`, `Ctrl` / `Control`,
-  `Shift`. Combine with `+`.
-- **Keys:** `Space`, `Tab`, `Return`, `A`–`Z`, `0`–`9`, `F1`–`F12`,
-  `Up`, `Down`, `Left`, `Right`.
-
-Examples: `"Cmd+Shift+L"`, `"Ctrl+Alt+Space"`, `"F13"`.
-
-### Accessibility permission
-
-The global hotkey requires Accessibility access — Walter prompts on
-first launch. Grant it under **System Settings → Privacy & Security →
-Accessibility**. Without it the hotkey leaks the underlying key into
-the active app instead of triggering Walter.
-
-### In-launcher keys (fixed)
-
-Beyond the configurable `open` / `close` hotkeys, these keys are fixed
-while the launcher is open:
-
-| Key | Action |
-| --- | ------ |
-| `Enter` | Launch / open / copy the selected result |
-| `Cmd+Enter` | Reveal the selected result in Finder (apps; falls back to the normal action for everything else) |
-| `Cmd+1` … `Cmd+9` | Jump to and activate the Nth visible result (hint shown on each row) |
-| `Cmd+C` | Copy the selected result's value — revalidated app path, alias/Settings URL, or computed answer. When text is selected in the search field, defers to normal text copy. |
-| `Cmd+V` | Paste into the search field |
-| `Tab` / `Shift+Tab` | Next / previous result |
-| `↑` / `↓` | Move selection (list and grid) |
-| `←` / `→` | Move the text cursor; in grid mode, move between tiles when a tile is selected |
-| `Esc` | Close the launcher (or exit theme-preview) |
-
----
+Other local keys: Tab/Shift+Tab and arrows navigate results, Return activates,
+Cmd+1…9 activates a numbered result, Cmd+C copies an answer/URL or revalidated
+allowed app path (selected query text copies normally). Cmd+Return reveals only
+a revalidated allowed app in Finder, never an arbitrary file. Grid horizontal
+arrows navigate tiles; on computed/web banners they retain text editing.
+The existing tray has Quit; popup-local Cmd+Q/Cmd+, behavior is deferred.
 
 ## `[search]`
 
