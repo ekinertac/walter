@@ -10,7 +10,7 @@ class KeyablePanel: NSPanel {
     // interpretation, so the text field's doCommandBy: never sees them — an
     // unhandled Cmd+Return just beeps. We intercept the launcher's Cmd
     // shortcuts here and forward to the controller.
-    var onCommandReturn: (() -> Void)?        // Cmd+Return → reveal in Finder
+    var onCommandReturn: (() -> Void)? // Reveal a revalidated allowed app only.
     var closeBinding: HotkeyBinding?
     var onClose: (() -> Void)?
     var onQuickSelect: ((Int) -> Void)?       // Cmd+1…9 → launch Nth result
@@ -25,7 +25,13 @@ class KeyablePanel: NSPanel {
         set {}
     }
 
+    override func update() {
+        InputTiming.shared.windowUpdate { super.update() }
+    }
+
     override func sendEvent(_ event: NSEvent) {
+        let timing = event.type == .keyDown ? InputTiming.shared.beginKeyEvent(timestamp: event.timestamp) : nil
+        defer { InputTiming.shared.endKeyEvent(timing) }
         if event.type == .keyDown, closeBinding?.matches(event) == true {
             onClose?()
             return
@@ -40,7 +46,6 @@ class KeyablePanel: NSPanel {
         let flags = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
         guard flags == .command else { return super.performKeyEquivalent(with: event) }
 
-        // Cmd+Return / keypad-Enter → reveal in Finder.
         if event.keyCode == 36 || event.keyCode == 76 {
             onCommandReturn?()
             return true

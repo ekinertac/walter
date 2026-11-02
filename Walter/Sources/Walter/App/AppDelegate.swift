@@ -1,67 +1,41 @@
-// AppDelegate.swift — Wires together all subsystems on launch
-//
-// Owns the top-level objects that must live for the process lifetime:
-//   - StatusBarController (tray icon + menu)
-//   - HotkeyManager (global Alt+Space listener)
-//   - LauncherPanelController (the floating search window)
-//   - ConfigManager (TOML config loading + hot-reload)
-//
-// Walter starts hidden on every launch; only the launcher hotkey toggles the popup.
-
+// Application lifetime owns hotkeys and the app index, never a panel or tray.
 import AppKit
 
-class AppDelegate: NSObject, NSApplicationDelegate {
-
-    private var statusBar: StatusBarController!
+final class AppDelegate: NSObject, NSApplicationDelegate {
+    private var statusBar: StatusBarController?
     private var hotkeys: HotkeyManager?
     private var panel: LauncherPanelController!
     private var config: ConfigManager!
+    private var appIndex: AppIndex!
+    private var symbolIndex: SymbolIndex!
 
     func applicationDidFinishLaunching(_ notification: Notification) {
-        // Set the app icon (used in About dialog, Cmd+Tab if ever shown, etc.)
-        if let iconURL = WalterResources.bundle.url(forResource: "AppIcon", withExtension: "icns"),
-           let icon = NSImage(contentsOf: iconURL) {
-            NSApp.applicationIconImage = icon
+        if let url = WalterResources.bundle.url(forResource: "AppIcon", withExtension: "icns") {
+            NSApp.applicationIconImage = NSImage(contentsOf: url)
         }
-
-        // Load config (falls back to defaults if file is missing)
         config = ConfigManager()
-
-        // Create the launcher panel (hidden initially)
-        panel = LauncherPanelController(config: config)
-
-        // Menu bar icon with Quit action
+        appIndex = AppIndex { [weak self] in self?.panel?.refreshResults() }
+        // Publish built-ins for subsequent lookups; completion must not reset a
+        // visible selection. Neither snapshot preparation belongs to a panel.
+        symbolIndex = SymbolIndex()
+        panel = LauncherPanelController(config: config, appIndex: appIndex, symbolIndex: symbolIndex)
         statusBar = StatusBarController(config: config)
-
         do {
             hotkeys = HotkeyManager(backend: try CarbonHotkeyBackend())
             configureHotkeys()
         } catch { showHotkeyError(error) }
-
         setupEditMenu()
-
-        // Hot-reload: when config.toml is saved, rebuild the panel with new values.
-        // Full teardown+rebuild is simpler and more reliable than patching every
-        // property individually — the panel is cheap to construct.
         config.onChange = { [weak self] in
             guard let self else { return }
-
-            // Registrations survive theme preview and panel replacement.
             self.configureHotkeys()
-
-            // Skip panel rebuild during theme preview (the panel updates
-            // colors directly via previewTheme).
-            if self.panel.suppressConfigRebuild { return }
-
-            let wasVisible = self.panel.isVisible
+            // Global registrations survive theme preview and panel replacement.
+            guard !self.panel.suppressConfigRebuild else { return }
+            let visible = self.panel.isVisible
             self.panel.hide()
-            self.panel = LauncherPanelController(config: self.config)
-            if wasVisible {
-                self.panel.show()
-            }
-            print("UI rebuilt with new config")
+            self.panel = LauncherPanelController(config: self.config, appIndex: self.appIndex,
+                symbolIndex: self.symbolIndex)
+            if visible { self.panel.show() }
         }
-
         // Always hidden at startup, including manual and macOS login launches.
     }
 
@@ -98,17 +72,14 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     private func setupEditMenu() {
-        let editMenu = NSMenu(title: "Edit")
-        editMenu.addItem(withTitle: "Select All", action: #selector(NSText.selectAll(_:)), keyEquivalent: "a")
-        editMenu.addItem(withTitle: "Copy", action: #selector(NSText.copy(_:)), keyEquivalent: "c")
-        editMenu.addItem(withTitle: "Paste", action: #selector(NSText.paste(_:)), keyEquivalent: "v")
-        editMenu.addItem(withTitle: "Cut", action: #selector(NSText.cut(_:)), keyEquivalent: "x")
-        editMenu.addItem(withTitle: "Undo", action: Selector(("undo:")), keyEquivalent: "z")
-        let editMenuItem = NSMenuItem(title: "Edit", action: nil, keyEquivalent: "")
-        editMenuItem.submenu = editMenu
-
-        let mainMenu = NSMenu()
-        mainMenu.addItem(editMenuItem)
-        NSApp.mainMenu = mainMenu
+        let edit = NSMenu(title: "Edit")
+        edit.addItem(withTitle: "Select All", action: #selector(NSText.selectAll(_:)), keyEquivalent: "a")
+        edit.addItem(withTitle: "Copy", action: #selector(NSText.copy(_:)), keyEquivalent: "c")
+        edit.addItem(withTitle: "Paste", action: #selector(NSText.paste(_:)), keyEquivalent: "v")
+        edit.addItem(withTitle: "Cut", action: #selector(NSText.cut(_:)), keyEquivalent: "x")
+        edit.addItem(withTitle: "Undo", action: Selector(("undo:")), keyEquivalent: "z")
+        let item = NSMenuItem(title: "Edit", action: nil, keyEquivalent: "")
+        item.submenu = edit
+        let menu = NSMenu(); menu.addItem(item); NSApp.mainMenu = menu
     }
 }

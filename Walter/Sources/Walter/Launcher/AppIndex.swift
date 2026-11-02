@@ -1,173 +1,131 @@
-// App discovery is confined to the shared /Applications policy.
+// In-memory app snapshots. All discovery/metadata/icon preparation is worker-only.
 import AppKit
-import CoreServices
-
-// ---------------------------------------------------------------------------
-// Data model
-// ---------------------------------------------------------------------------
 
 struct AppEntry {
-    let name: String            // display name (e.g. "Visual Studio Code")
-    let path: String            // full path to .app bundle
-    let nameLower: String       // pre-lowercased for fast matching
-    let icon: NSImage?          // cached app icon (loaded lazily on first access)
+    let name: String
+    let path: String
+    let nameLower: String
+    let icon: PreparedIcon?
 }
 
-// ---------------------------------------------------------------------------
-// AppIndex
-// ---------------------------------------------------------------------------
-
-class AppIndex {
-
-    /// Full list of indexed apps — used by LauncherEngine for fuzzy matching.
+/// Main-queue coordinator. One active scan, at most one coalesced follow-up for
+/// filesystem changes. Opening/searching only reads the last published snapshot.
+final class AppIndex {
     private(set) var allEntries: [AppEntry] = []
-    private var eventStream: FSEventStreamRef?
+    private(set) var isRefreshing = false
+    private let builder: AppIndexBuilding
+    private let watcher: AppIndexWatching
     private let onChange: () -> Void
-    private let apps = AllowedApps()
+    private let diagnostic: (String) -> Void
+    private let clock: () -> TimeInterval
+    private let popupInterval: TimeInterval
+    private let debounceInterval: TimeInterval
+    private let queue = DispatchQueue(label: "walter.apps", qos: .utility)
+    private var lastCompletedAt: TimeInterval?
+    private var debounce: DispatchWorkItem?
+    private var pendingInvalidation = AppIndexInvalidation()
+    private var pendingFilesystem = false
+    private var filesystemReady = false
+    private var restartWatcher = false
+    private var stopped = false
 
-    init(onChange: @escaping () -> Void = {}) {
+    convenience init(policy: AllowedApps = AllowedApps(), onChange: @escaping () -> Void = {}) {
+        self.init(builder: CachedAppIndexBuilder(policy: policy),
+                  watcher: FSEventsAppIndexWatcher(root: policy.root), onChange: onChange)
+    }
+
+    /// Test dependencies avoid real app scanning, native icon calls, and watchers.
+    init(builder: AppIndexBuilding, watcher: AppIndexWatching,
+         clock: @escaping () -> TimeInterval = { ProcessInfo.processInfo.systemUptime },
+         popupInterval: TimeInterval = 30, debounceInterval: TimeInterval = 0.2,
+         diagnostic: @escaping (String) -> Void = { print($0) },
+         onChange: @escaping () -> Void = {}) {
+        self.builder = builder
+        self.watcher = watcher
+        self.clock = clock
+        self.popupInterval = popupInterval
+        self.debounceInterval = debounceInterval
+        self.diagnostic = diagnostic
         self.onChange = onChange
-        rebuildIndex()
-        startWatching()
+        dispatchPrecondition(condition: .onQueue(.main))
+        startWatching() // Watch first, then scan: no scan-to-watch startup gap.
+        beginScan(notifyResults: true, invalidation: AppIndexInvalidation(all: true))
     }
 
-    deinit {
-        stopWatching()
+    deinit { stop() }
+
+    /// Call after showing the popup. Constant-time scheduling only: no file or
+    /// icon work, no waiting, and no result-list rebuild when this scan completes.
+    func refreshForPopup() {
+        dispatchPrecondition(condition: .onQueue(.main))
+        guard !stopped, !isRefreshing, !pendingFilesystem,
+              lastCompletedAt.map({ clock() - $0 >= popupInterval }) ?? true else { return }
+        beginScan(notifyResults: false, invalidation: AppIndexInvalidation())
     }
 
-    /// Returns all apps whose name contains the query (case-insensitive).
-    /// Empty query returns everything, sorted alphabetically.
-    func search(query: String) -> [AppEntry] {
-        if query.isEmpty {
-            return allEntries
-        }
-        let q = query.lowercased()
-        return allEntries.filter { $0.nameLower.contains(q) }
-    }
-
-    // MARK: - Index building
-
-    private var allDirs: [String] { [apps.root.path] }
-
-    private func rebuildIndex() {
-        allEntries = buildEntries()
-    }
-
-    private func buildEntries() -> [AppEntry] {
-        apps.discover().compactMap { url -> AppEntry? in
-            guard let bundle = Bundle(url: url) else { return nil }
-            let name = appDisplayName(bundle: bundle, fallback: url)
-            let icon = NSWorkspace.shared.icon(forFile: url.path).copy() as? NSImage
-            icon?.size = NSSize(width: 64, height: 64)
-            return AppEntry(name: name, path: url.path, nameLower: name.lowercased(), icon: icon)
-        }.sorted { $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending }
-    }
-
-    /// Reads the display name from a pre-loaded bundle.
-    /// Falls back to the filename without .app extension.
-    private func appDisplayName(bundle: Bundle, fallback url: URL) -> String {
-        // CFBundleDisplayName is the user-facing name (localised)
-        if let displayName = bundle.object(forInfoDictionaryKey: "CFBundleDisplayName") as? String,
-           !displayName.isEmpty {
-            return displayName
-        }
-        // CFBundleName is the short bundle name
-        if let bundleName = bundle.object(forInfoDictionaryKey: "CFBundleName") as? String,
-           !bundleName.isEmpty {
-            return bundleName
-        }
-        return url.deletingPathExtension().lastPathComponent
-    }
-
-    // MARK: - FSEvents watcher
-
-    /// Starts an FSEvents stream on all watched directories.
-    /// Fires within ~1 second of any filesystem change (new app installed,
-    /// app deleted, app renamed). Same mechanism as your screenshot watcher
-    /// launchd plist — but native Swift, no shell scripts needed.
     private func startWatching() {
-        let paths = allDirs as CFArray
-
-        var context = FSEventStreamContext(
-            version: 0,
-            info: Unmanaged.passUnretained(self).toOpaque(),
-            retain: nil,
-            release: nil,
-            copyDescription: nil
-        )
-
-        guard let stream = FSEventStreamCreate(
-            nil,                                    // allocator
-            fsEventsCallback,                       // callback
-            &context,                               // context (passes `self`)
-            paths,                                  // paths to watch
-            FSEventStreamEventId(kFSEventStreamEventIdSinceNow),
-            1.0,                                    // latency: 1 second batch window
-            UInt32(kFSEventStreamCreateFlagUseCFTypes | kFSEventStreamCreateFlagFileEvents)
-        ) else {
-            print("AppIndex: Failed to create FSEventStream")
-            return
+        if !watcher.start(onChange: { [weak self] event in self?.filesystemChanged(event) }) {
+            diagnostic("AppIndex: filesystem watcher could not start; background popup refreshes remain available.")
         }
-
-        eventStream = stream
-        FSEventStreamSetDispatchQueue(stream, DispatchQueue.main)
-        FSEventStreamStart(stream)
-        print("AppIndex: FSEvents watcher active on \(allDirs.count) directories")
     }
 
-    private func stopWatching() {
-        guard let stream = eventStream else { return }
-        FSEventStreamStop(stream)
-        FSEventStreamInvalidate(stream)
-        FSEventStreamRelease(stream)
-        eventStream = nil
+    private func filesystemChanged(_ event: AppIndexEvent) {
+        dispatchPrecondition(condition: .onQueue(.main))
+        guard !stopped else { return }
+        pendingFilesystem = true
+        pendingInvalidation.merge(paths: event.paths, all: event.invalidateAll || event.paths.isEmpty)
+        restartWatcher = restartWatcher || event.restartWatcher
+        // A bounded coalescing window avoids both event-storm queue growth and
+        // indefinite trailing-edge debounce starvation during a long install.
+        guard debounce == nil, !filesystemReady else { return }
+        let work = DispatchWorkItem { [weak self] in
+            guard let self, !self.stopped else { return }
+            self.debounce = nil
+            self.filesystemReady = true
+            self.startPendingFilesystemScan()
+        }
+        debounce = work
+        DispatchQueue.main.asyncAfter(deadline: .now() + debounceInterval, execute: work)
     }
 
-    /// Called by FSEvents when any watched directory changes. The work
-    /// hops off the main queue so a noisy installer or fast `make`-reinstall
-    /// loop can't stall keystroke handling in the launcher.
-    func handleFSEvent() {
-        rebuildAsync(qos: .utility)
+    private func startPendingFilesystemScan() {
+        guard !stopped, !isRefreshing, pendingFilesystem, filesystemReady else { return }
+        if restartWatcher {
+            // Not inside the FSEvents callback: safely replace a root-changed stream.
+            startWatching()
+            restartWatcher = false
+        }
+        let invalidation = pendingInvalidation
+        pendingInvalidation = AppIndexInvalidation()
+        pendingFilesystem = false
+        filesystemReady = false
+        beginScan(notifyResults: true, invalidation: invalidation)
     }
 
-    /// Safety-net refresh, called when the launcher window is opened.
-    /// FSEvents should normally keep the index current, but agent-app
-    /// suspension (LSUIElement=true), bursty installers, and queue
-    /// coalescing can occasionally let a freshly-installed app slip
-    /// past until the next event. The rebuild now runs on a background
-    /// queue so popup input is not blocked while scanning allowed apps.
-    /// The previous synchronous version cost a few hundred ms
-    /// at open time and the first keystrokes leaked into the active app.
-    func refresh() {
-        rebuildAsync(qos: .userInitiated)
-    }
-
-    /// Builds a fresh entry list on a background queue, then assigns it
-    /// on main. The `allEntries` property is only ever written on the
-    /// main queue, so search() and the UI never race with the rebuild.
-    private func rebuildAsync(qos: DispatchQoS.QoSClass) {
-        DispatchQueue.global(qos: qos).async { [weak self] in
-            guard let self else { return }
-            let newEntries = self.buildEntries()
+    private func beginScan(notifyResults: Bool, invalidation: AppIndexInvalidation) {
+        isRefreshing = true
+        let builder = self.builder
+        queue.async { [weak self] in
+            let entries = builder.build(invalidation: invalidation)
             DispatchQueue.main.async { [weak self] in
-                guard let self else { return }
-                self.allEntries = newEntries
-                self.onChange()
+                guard let self, !self.stopped else { return }
+                // Entries/images are fully prepared. Main only swaps the snapshot.
+                self.allEntries = entries
+                self.isRefreshing = false
+                self.lastCompletedAt = self.clock()
+                if notifyResults { self.onChange() }
+                self.startPendingFilesystemScan()
             }
         }
     }
-}
 
-// FSEvents C callback — bridges to the Swift instance via the context pointer.
-private func fsEventsCallback(
-    streamRef: ConstFSEventStreamRef,
-    clientCallBackInfo: UnsafeMutableRawPointer?,
-    numEvents: Int,
-    eventPaths: UnsafeMutableRawPointer,
-    eventFlags: UnsafePointer<FSEventStreamEventFlags>,
-    eventIds: UnsafePointer<FSEventStreamEventId>
-) {
-    guard let info = clientCallBackInfo else { return }
-    let index = Unmanaged<AppIndex>.fromOpaque(info).takeUnretainedValue()
-    index.handleFSEvent()
+    /// Pending timer/watch callbacks cannot revive the index after teardown.
+    /// An already-running finite worker scan may finish, but cannot publish.
+    func stop() {
+        guard !stopped else { return }
+        stopped = true
+        debounce?.cancel()
+        debounce = nil
+        watcher.stop()
+    }
 }

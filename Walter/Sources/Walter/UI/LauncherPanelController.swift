@@ -17,14 +17,16 @@ class LauncherPanelController: NSObject {
     private let resultsView: any ResultsView
     private var launcher: LauncherEngine!
     private let config: ConfigManager
+    private let appIndex: AppIndex
 
     private var selectedIndex = 0
     private var previousApp: NSRunningApplication?
     private var isThemePicker = false
     var suppressConfigRebuild = false
 
-    init(config: ConfigManager) {
+    init(config: ConfigManager, appIndex: AppIndex, symbolIndex: SymbolIndex) {
         self.config = config
+        self.appIndex = appIndex
 
         let screenFrame = Self.pointerScreenFrame
         let width = min(config.s(CGFloat(config.layout.width)), screenFrame.width * 0.95)
@@ -163,10 +165,11 @@ class LauncherPanelController: NSObject {
             resultsView.bottomAnchor.constraint(equalTo: vibrancyView.bottomAnchor),
         ])
 
-        launcher = LauncherEngine(config: config, onIndexChanged: { [weak self] in
-            guard let self, self.panel.isVisible else { return }
-            self.updateResults(query: self.searchField.stringValue)
-        })
+        launcher = LauncherEngine(config: config,
+            entries: { [weak appIndex] in appIndex?.allEntries ?? [] },
+            symbolLoader: { [weak symbolIndex] name, description in
+                symbolIndex?.image(name: name, description: description)
+            })
 
         resultsView.onRowClicked = { [weak self] index in
             guard let self else { return }
@@ -181,7 +184,7 @@ class LauncherPanelController: NSObject {
 
         // Cmd-shortcuts arrive as key-equivalents, not editing commands, so
         // they're handled at the panel level rather than in doCommandBy:.
-        panel.onCommandReturn = { [weak self] in self?.revealSelectionInFinder() }
+        panel.onCommandReturn = { [weak self] in self?.revealAllowedApp() }
         panel.onQuickSelect = { [weak self] n in self?.quickSelect(n) }
         panel.onCopyResult = { [weak self] in self?.copySelectionValue() ?? false }
 
@@ -209,18 +212,15 @@ class LauncherPanelController: NSObject {
         if frontmost?.bundleIdentifier != Bundle.main.bundleIdentifier {
             previousApp = frontmost
         }
-        // Re-scan the app index every time the launcher opens. FSEvents
-        // usually keeps it current, but agent-app suspension can let a
-        // freshly-installed app slip past until something else triggers
-        // a rebuild. Doing it here means "I just installed this app, why
-        // doesn't Walter see it" can be answered with "open Walter".
-        launcher.refreshIndexes()
         positionOnScreen()
         // Sync background layer size
         backgroundLayer.frame = panel.contentView?.bounds ?? .zero
         panel.makeKeyAndOrderFront(nil)
         panel.makeFirstResponder(searchField)
         NSApp.activate(ignoringOtherApps: true)
+        // Present the existing snapshot first. A throttled background hedge
+        // prepares future queries without rebuilding this visible selection.
+        appIndex.refreshForPopup()
     }
 
     func hide() {
@@ -258,6 +258,11 @@ class LauncherPanelController: NSObject {
         panel.contentView?.needsDisplay = true
     }
 
+    func refreshResults() {
+        guard panel.isVisible else { return }
+        updateResults(query: searchField.stringValue)
+    }
+
     // MARK: - State
 
     private func resetState() {
@@ -272,19 +277,19 @@ class LauncherPanelController: NSObject {
     }
 
     private func updateResults(query: String) {
-        let results: [SearchResult]
-        if isThemePicker {
-            results = launcher.themeResults(filter: query)
-        } else {
-            results = launcher.search(query: query)
+        let timing = InputTiming.shared
+        let results = timing.measure(.search) {
+            isThemePicker ? launcher.themeResults(filter: query) : launcher.search(query: query)
         }
         selectedIndex = 0
-        resultsView.update(results: results, selectedIndex: selectedIndex)
-        // Rows are rebuilt fresh on every update and reset to system label
-        // colors, so re-apply the configured theme palette each time.
-        applyResultColors()
-        resizePanelToFit(resultCount: results.count, results: results)
-        separator.isHidden = results.isEmpty
+        timing.measure(.views) { resultsView.update(results: results, selectedIndex: selectedIndex) }
+        // Apply the current palette to both reused and newly allocated views;
+        // retained slots must not preserve an old preview palette.
+        timing.measure(.colors) {
+            applyResultColors()
+            separator.isHidden = results.isEmpty
+        }
+        timing.measure(.geometry) { resizePanelToFit(resultCount: results.count, results: results) }
         if isThemePicker { notifyPreviewIfNeeded() }
     }
 
@@ -552,9 +557,9 @@ class LauncherPanelController: NSObject {
         guard let result = resultsView.result(at: selectedIndex) else { return false }
         let text: String?
         switch result.action {
-        case .openApp(let p):      text = AllowedApps().validatedURL(for: p)?.path
+        case .openApp(let path): text = AllowedApps().validatedURL(for: path)?.path
         case .url(let u), .settings(let u): text = u
-        case .copy(let v):         text = v
+        case .copy(let v): text = v
         case .enterThemePicker, .applyTheme: text = nil
         }
         guard let text, !text.isEmpty else { return false }
@@ -564,8 +569,7 @@ class LauncherPanelController: NSObject {
         return true
     }
 
-    /// Only revalidated allowed apps can be revealed in Finder.
-    private func revealSelectionInFinder() {
+    private func revealAllowedApp() {
         guard let result = resultsView.result(at: selectedIndex) else { return }
         guard case .openApp(let path) = result.action else { confirmSelection(); return }
         guard let url = AllowedApps().validatedURL(for: path) else { return }
@@ -578,8 +582,10 @@ class LauncherPanelController: NSObject {
 
 extension LauncherPanelController: NSTextFieldDelegate {
     func controlTextDidChange(_ obj: Notification) {
-        adjustInputFontSize()
-        updateResults(query: searchField.stringValue)
+        InputTiming.shared.measure(.delegate) {
+            InputTiming.shared.measure(.font) { adjustInputFontSize() }
+            updateResults(query: searchField.stringValue)
+        }
     }
 
     func control(_ control: NSControl, textView: NSTextView, doCommandBy commandSelector: Selector) -> Bool {
@@ -588,9 +594,7 @@ extension LauncherPanelController: NSTextFieldDelegate {
             return true
         }
         if commandSelector == #selector(NSResponder.insertNewline(_:)) {
-            // Plain Return launches/opens. Cmd+Return (reveal in Finder) is
-            // handled in KeyablePanel.performKeyEquivalent — it never reaches
-            // here because AppKit routes Cmd-modified keys as key-equivalents.
+            // Return activates the selected allowed result.
             confirmSelection(); return true
         }
         if commandSelector == #selector(NSResponder.insertTab(_:)) {

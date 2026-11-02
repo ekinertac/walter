@@ -36,6 +36,7 @@ class ResultsListView: NSView, ResultsView {
     private let scrollView: NSScrollView
     private let documentView: NSView
     private var rowViews: [ResultRowView] = []
+    private let rowPool = ReusableResultPool<ResultRowView>(retainedLimit: 64)
     private var results: [SearchResult] = []
     private let config: ConfigManager
 
@@ -68,6 +69,9 @@ class ResultsListView: NSView, ResultsView {
             scrollView.leadingAnchor.constraint(equalTo: leadingAnchor),
             scrollView.trailingAnchor.constraint(equalTo: trailingAnchor),
         ])
+        // Hidden panel setup, not popup opening/typing: prepare the common
+        // 25 ranked results + fallback, including their constraint graphs.
+        rowPool.prewarm(count: 26, make: makeRow)
     }
 
     required init?(coder: NSCoder) { fatalError() }
@@ -96,15 +100,15 @@ class ResultsListView: NSView, ResultsView {
 
     func update(results: [SearchResult], selectedIndex: Int) {
         self.results = results
-        rebuildRows()
+        InputTiming.shared.measure(.viewContent) { updateRows() }
         update(selectedIndex: selectedIndex)
     }
 
     func update(selectedIndex: Int) {
-        for (i, row) in rowViews.enumerated() {
-            row.setSelected(i == selectedIndex)
+        InputTiming.shared.measure(.viewSelection) {
+            for (i, row) in rowViews.enumerated() { row.setSelected(i == selectedIndex) }
         }
-        scrollToRow(at: selectedIndex)
+        InputTiming.shared.measure(.viewScroll) { scrollToRow(at: selectedIndex) }
     }
 
     /// Live-update colors on all rows (used during theme preview).
@@ -116,16 +120,28 @@ class ResultsListView: NSView, ResultsView {
 
     private func scrollToRow(at index: Int) {
         guard index >= 0, index < rowViews.count else { return }
-        let row = rowViews[index]
-        // Convert row frame to the document view's coordinate space and scroll to it
-        row.layoutSubtreeIfNeeded()
-        let rowFrame = row.convert(row.bounds, to: documentView)
-        scrollView.contentView.scrollToVisible(rowFrame)
+        // Rows are manually positioned directly in documentView. Their frames
+        // are already valid; laying out labels is unnecessary just to scroll.
+        scrollView.contentView.scrollToVisible(rowViews[index].frame)
     }
 
-    private func rebuildRows() {
-        rowViews.forEach { $0.removeFromSuperview() }
-        rowViews = []
+    private func makeRow() -> ResultRowView {
+        let row = ResultRowView(config: config)
+        row.isHidden = true
+        row.frame = NSRect(x: 0, y: 0, width: max(0, CGFloat(config.layout.width) - config.s(16)), height: config.s(60))
+        row.autoresizingMask = [.width]
+        documentView.addSubview(row)
+        row.layoutSubtreeIfNeeded()
+        return row
+    }
+
+    private func updateRows() {
+        rowViews = InputTiming.shared.measure(.viewPool) {
+            rowPool.resize(count: results.count, make: makeRow,
+                retire: { row in
+                    InputTiming.shared.measure(.viewClear) { row.prepareForReuse(); row.isHidden = true }
+                }, discard: { $0.removeFromSuperview() })
+        }
 
         let rowHeight = config.s(60)
         let rowStride = config.s(64)
@@ -138,9 +154,11 @@ class ResultsListView: NSView, ResultsView {
         let totalHeight = padding + CGFloat(visibleResults.count) * rowStride + padding
 
         // Set the document view size so the scroll view knows the content height
-        documentView.frame = NSRect(x: 0, y: 0, width: bounds.width, height: totalHeight)
+        InputTiming.shared.measure(.viewDocument) {
+            documentView.frame = NSRect(x: 0, y: 0, width: bounds.width, height: totalHeight)
+        }
 
-        // Build rows top-down. In flipped coordinates (NSScrollView uses flipped),
+        // Bind rows top-down. In flipped coordinates (NSScrollView uses flipped),
         // we lay out from y=0 downward.
         var yOffset = padding
 
@@ -148,7 +166,9 @@ class ResultsListView: NSView, ResultsView {
             // The first nine rows get a "⌘N" hint so the Cmd+1…9 quick-launch
             // shortcuts are discoverable rather than hidden.
             let shortcut = index < 9 ? index + 1 : nil
-            let row = ResultRowView(result: result, config: config, shortcutNumber: shortcut)
+            let row = rowViews[index]
+            row.update(result: result, shortcutNumber: shortcut)
+            row.isHidden = false
             row.onClick = { [weak self] in self?.onRowClicked?(index) }
             row.frame = NSRect(
                 x: sideInset,
@@ -156,9 +176,6 @@ class ResultsListView: NSView, ResultsView {
                 width: max(0, documentView.bounds.width - sideInset * 2),
                 height: rowHeight
             )
-            row.autoresizingMask = [.width]
-            documentView.addSubview(row)
-            rowViews.append(row)
             yOffset += rowStride
         }
     }
@@ -185,23 +202,18 @@ class ResultRowView: NSView {
 
     var onClick: (() -> Void)?
 
-    private let iconView = NSImageView()
+    private let iconView = ResultIconView(frame: .zero)
     private let titleLabel = NSTextField(labelWithString: "")
     private let subtitleLabel = NSTextField(labelWithString: "")
     private let shortcutLabel = NSTextField(labelWithString: "")
 
-    init(result: SearchResult, config: ConfigManager, shortcutNumber: Int? = nil) {
+    init(config: ConfigManager) {
         super.init(frame: .zero)
         wantsLayer = true
         layer?.cornerRadius = config.s(10)
 
         let iconSize = config.s(40)
 
-        if let icon = result.icon {
-            icon.size = NSSize(width: iconSize, height: iconSize)
-            iconView.image = icon
-        }
-        iconView.imageScaling = .scaleProportionallyUpOrDown
         iconView.translatesAutoresizingMaskIntoConstraints = false
 
         let titleWeight = LauncherPanelController.fontWeight(from: config.theme.fontWeight)
@@ -213,15 +225,12 @@ class ResultRowView: NSView {
         subtitleLabel.textColor = .secondaryLabelColor
         subtitleLabel.lineBreakMode = .byTruncatingMiddle
 
-        // "⌘N" quick-launch hint, dimmed and right-aligned. Only present on
-        // the first nine rows; nil keeps the row exactly as it was.
+        // "⌘N" quick-launch hint, dimmed and right-aligned. Rebinding clears
+        // it when a reused slot no longer represents one of the first nine rows.
         shortcutLabel.font = LauncherPanelController.resolveFont(name: config.theme.font, size: config.s(12), weight: .regular)
         shortcutLabel.textColor = .tertiaryLabelColor
         shortcutLabel.alignment = .right
         shortcutLabel.translatesAutoresizingMaskIntoConstraints = false
-        if let n = shortcutNumber {
-            shortcutLabel.stringValue = "⌘\(n)"
-        }
 
         titleLabel.translatesAutoresizingMaskIntoConstraints = false
         subtitleLabel.translatesAutoresizingMaskIntoConstraints = false
@@ -248,20 +257,47 @@ class ResultRowView: NSView {
             subtitleLabel.leadingAnchor.constraint(equalTo: titleLabel.leadingAnchor),
             subtitleLabel.trailingAnchor.constraint(equalTo: titleLabel.trailingAnchor),
         ])
+    }
 
-        titleLabel.stringValue = result.title
-        subtitleLabel.stringValue = result.subtitle
+    func update(result: SearchResult, shortcutNumber: Int? = nil) {
+        InputTiming.shared.measure(.viewImages) {
+            // Only swap prepared pixels; never acquire or rasterize images here.
+            iconView.setIcon(result.icon, description: result.title)
+        }
+        InputTiming.shared.measure(.viewText) {
+            if titleLabel.stringValue != result.title { titleLabel.stringValue = result.title }
+            if subtitleLabel.stringValue != result.subtitle { subtitleLabel.stringValue = result.subtitle }
+            let shortcut = shortcutNumber.map { "⌘\($0)" } ?? ""
+            if shortcutLabel.stringValue != shortcut { shortcutLabel.stringValue = shortcut }
+        }
+    }
+
+    override func prepareForReuse() {
+        super.prepareForReuse()
+        iconView.setIcon(nil)
+        titleLabel.stringValue = ""
+        subtitleLabel.stringValue = ""
+        shortcutLabel.stringValue = ""
+        onClick = nil
+        setSelected(false)
     }
 
     required init?(coder: NSCoder) { fatalError() }
 
+    private var selected = false
     private var accentColor: NSColor = .controlAccentColor
     // Full-opacity selection fill. Defaults to accent @ 0.2 until the
     // theme supplies an explicit selection color via updateColors.
     private var selectionFill: NSColor = NSColor.controlAccentColor.withAlphaComponent(0.2)
 
     func setSelected(_ selected: Bool) {
-        layer?.backgroundColor = selected ? selectionFill.cgColor : nil
+        self.selected = selected
+        let color = selected ? selectionFill.cgColor : nil
+        guard layer?.backgroundColor != color else { return }
+        CATransaction.begin()
+        CATransaction.setDisableActions(true)
+        layer?.backgroundColor = color
+        CATransaction.commit()
     }
 
     func updateColors(foreground: NSColor, accent: NSColor, selection: NSColor, subtitle: NSColor) {
@@ -271,6 +307,7 @@ class ResultRowView: NSView {
         shortcutLabel.textColor = subtitle.withAlphaComponent(0.7)
         accentColor = accent
         selectionFill = selection
+        setSelected(selected)
     }
 
     override func updateTrackingAreas() {

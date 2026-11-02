@@ -26,7 +26,9 @@ class ResultsGridView: NSView, ResultsView {
 
     private let scrollView: NSScrollView
     private let documentView: NSView
-    private var rowViews: [(NSView, Int)] = []   // (view, original-result-index)
+    private var rowViews: [(NSView, Int)] = []   // Active (view, original-result-index)
+    private let bannerPool = ReusableResultPool<ResultRowView>(retainedLimit: 16)
+    private let tilePool = ReusableResultPool<ResultTileView>(retainedLimit: 15)
     private var results: [SearchResult] = []
     private let config: ConfigManager
 
@@ -77,6 +79,8 @@ class ResultsGridView: NSView, ResultsView {
             scrollView.leadingAnchor.constraint(equalTo: leadingAnchor),
             scrollView.trailingAnchor.constraint(equalTo: trailingAnchor),
         ])
+        tilePool.prewarm(count: 15, make: makeTile)
+        bannerPool.prewarm(count: 2, make: makeBanner)
     }
 
     required init?(coder: NSCoder) { fatalError() }
@@ -144,18 +148,20 @@ class ResultsGridView: NSView, ResultsView {
         topBannerIndices = split.top
         tileIndices = split.tiles
         bottomBannerIndex = split.bottom
-        rebuildSubviews()
+        InputTiming.shared.measure(.viewContent) { updateSubviews() }
         update(selectedIndex: selectedIndex)
     }
 
     func update(selectedIndex: Int) {
         currentSelectedIndex = selectedIndex
-        for (view, index) in rowViews {
-            let selected = (index == selectedIndex)
-            (view as? ResultRowView)?.setSelected(selected)
-            (view as? ResultTileView)?.setSelected(selected)
+        InputTiming.shared.measure(.viewSelection) {
+            for (view, index) in rowViews {
+                let selected = (index == selectedIndex)
+                (view as? ResultRowView)?.setSelected(selected)
+                (view as? ResultTileView)?.setSelected(selected)
+            }
         }
-        scrollToView(forIndex: selectedIndex)
+        InputTiming.shared.measure(.viewScroll) { scrollToView(forIndex: selectedIndex) }
     }
 
     func updateColors(foreground: NSColor, accent: NSColor, selection: NSColor, subtitle: NSColor) {
@@ -285,17 +291,48 @@ class ResultsGridView: NSView, ResultsView {
 
     private func scrollToView(forIndex index: Int) {
         guard let entry = rowViews.first(where: { $0.1 == index }) else { return }
-        entry.0.layoutSubtreeIfNeeded()
-        let frame = entry.0.convert(entry.0.bounds, to: documentView)
-        scrollView.contentView.scrollToVisible(frame)
+        // Manual frames already use document coordinates; no label layout is needed.
+        scrollView.contentView.scrollToVisible(entry.0.frame)
     }
 
-    private func rebuildSubviews() {
-        rowViews.forEach { $0.0.removeFromSuperview() }
-        rowViews = []
+    private func makeBanner() -> ResultRowView {
+        let row = ResultRowView(config: config)
+        row.isHidden = true
+        row.frame = NSRect(x: 0, y: 0, width: max(0, CGFloat(config.layout.width) - config.s(32)), height: config.s(60))
+        row.autoresizingMask = [.width]
+        documentView.addSubview(row)
+        row.layoutSubtreeIfNeeded()
+        return row
+    }
+
+    private func makeTile() -> ResultTileView {
+        let tile = ResultTileView(config: config)
+        tile.isHidden = true
+        tile.frame = NSRect(x: 0, y: 0, width: max(1, floor((CGFloat(config.layout.width) - config.s(32)) / CGFloat(columns))), height: config.s(120))
+        documentView.addSubview(tile)
+        tile.layoutSubtreeIfNeeded()
+        return tile
+    }
+
+    private func updateSubviews() {
+        let banners = InputTiming.shared.measure(.viewPool) {
+            bannerPool.resize(count: topBannerIndices.count + (bottomBannerIndex == nil ? 0 : 1), make: makeBanner,
+                retire: { row in
+                    InputTiming.shared.measure(.viewClear) { row.prepareForReuse(); row.isHidden = true }
+                }, discard: { $0.removeFromSuperview() })
+        }
+        let tiles = InputTiming.shared.measure(.viewPool) {
+            tilePool.resize(count: tileIndices.count, make: makeTile,
+                retire: { tile in
+                    InputTiming.shared.measure(.viewClear) { tile.prepareForReuse(); tile.isHidden = true }
+                }, discard: { $0.removeFromSuperview() })
+        }
+        rowViews.removeAll(keepingCapacity: true)
 
         guard !results.isEmpty else {
-            documentView.frame = NSRect(x: 0, y: 0, width: bounds.width, height: 0)
+            InputTiming.shared.measure(.viewDocument) {
+                documentView.frame = NSRect(x: 0, y: 0, width: bounds.width, height: 0)
+            }
             return
         }
 
@@ -306,8 +343,10 @@ class ResultsGridView: NSView, ResultsView {
         var y = topPad
 
         // Top banners (full width).
-        for index in topBannerIndices {
-            let row = ResultRowView(result: results[index], config: config)
+        for (slot, index) in topBannerIndices.enumerated() {
+            let row = banners[slot]
+            row.update(result: results[index])
+            row.isHidden = false
             row.onClick = { [weak self] in self?.onRowClicked?(index) }
             row.frame = NSRect(
                 x: sideInset,
@@ -315,8 +354,6 @@ class ResultsGridView: NSView, ResultsView {
                 width: max(0, bounds.width - sideInset * 2),
                 height: bannerHeight - config.s(4)
             )
-            row.autoresizingMask = [.width]
-            documentView.addSubview(row)
             rowViews.append((row, index))
             y += bannerHeight
         }
@@ -329,7 +366,9 @@ class ResultsGridView: NSView, ResultsView {
             // (not the tile's visual position) to stay correct when top
             // banners shift the numbering.
             let shortcut = index < 9 ? index + 1 : nil
-            let tileView = ResultTileView(result: results[index], config: config, shortcutNumber: shortcut)
+            let tileView = tiles[visualPos]
+            tileView.update(result: results[index], shortcutNumber: shortcut)
+            tileView.isHidden = false
             tileView.onClick = { [weak self] in self?.onRowClicked?(index) }
             tileView.frame = NSRect(
                 x: sideInset + CGFloat(col) * tile.width,
@@ -337,7 +376,6 @@ class ResultsGridView: NSView, ResultsView {
                 width: tile.width,
                 height: tile.height
             )
-            documentView.addSubview(tileView)
             rowViews.append((tileView, index))
         }
         if !tileIndices.isEmpty {
@@ -347,7 +385,9 @@ class ResultsGridView: NSView, ResultsView {
 
         // Bottom banner.
         if let index = bottomBannerIndex {
-            let row = ResultRowView(result: results[index], config: config)
+            let row = banners[topBannerIndices.count]
+            row.update(result: results[index])
+            row.isHidden = false
             row.onClick = { [weak self] in self?.onRowClicked?(index) }
             row.frame = NSRect(
                 x: sideInset,
@@ -355,24 +395,19 @@ class ResultsGridView: NSView, ResultsView {
                 width: max(0, bounds.width - sideInset * 2),
                 height: bannerHeight - config.s(4)
             )
-            row.autoresizingMask = [.width]
-            documentView.addSubview(row)
             rowViews.append((row, index))
             y += bannerHeight
         }
 
-        documentView.frame = NSRect(x: 0, y: 0, width: bounds.width, height: y + topPad)
+        InputTiming.shared.measure(.viewDocument) {
+            documentView.frame = NSRect(x: 0, y: 0, width: bounds.width, height: y + topPad)
+        }
     }
 
     override func layout() {
         super.layout()
-        // Width-only adjustments to existing subviews. We deliberately do
-        // NOT rebuild here — `rebuildSubviews()` recreates tile views and
-        // wipes `setSelected(true)` flags that were just applied during
-        // `update(results:selectedIndex:)`. Layout fires asynchronously
-        // after the frame settles on each keystroke, so rebuilding from
-        // here introduces a race where the first-result selection
-        // disappears intermittently as the user types.
+        // Width-only adjustments. Rebinding belongs in update(), not layout;
+        // asynchronous layout must not reset result content or selection.
         documentView.frame.size.width = scrollView.contentSize.width
         guard !rowViews.isEmpty else { return }
 
@@ -404,12 +439,12 @@ class ResultTileView: NSView {
 
     var onClick: (() -> Void)?
 
-    private let iconView = NSImageView()
+    private let iconView = ResultIconView(frame: .zero)
     private let titleLabel = NSTextField(labelWithString: "")
     private let shortcutLabel = NSTextField(labelWithString: "")
     private let highlight = CALayer()
 
-    init(result: SearchResult, config: ConfigManager, shortcutNumber: Int? = nil) {
+    init(config: ConfigManager) {
         super.init(frame: .zero)
         wantsLayer = true
 
@@ -420,11 +455,6 @@ class ResultTileView: NSView {
         highlight.backgroundColor = nil
         layer?.addSublayer(highlight)
 
-        if let icon = result.icon {
-            icon.size = NSSize(width: iconSize, height: iconSize)
-            iconView.image = icon
-        }
-        iconView.imageScaling = .scaleProportionallyUpOrDown
         iconView.translatesAutoresizingMaskIntoConstraints = false
 
         let titleWeight = LauncherPanelController.fontWeight(from: config.theme.fontWeight)
@@ -433,7 +463,6 @@ class ResultTileView: NSView {
         titleLabel.lineBreakMode = .byTruncatingTail
         titleLabel.alignment = .center
         titleLabel.translatesAutoresizingMaskIntoConstraints = false
-        titleLabel.stringValue = result.title
 
         // "⌘N" quick-launch hint, top-trailing corner, dimmed. Only on the
         // first nine tiles.
@@ -441,9 +470,6 @@ class ResultTileView: NSView {
         shortcutLabel.textColor = .tertiaryLabelColor
         shortcutLabel.alignment = .right
         shortcutLabel.translatesAutoresizingMaskIntoConstraints = false
-        if let n = shortcutNumber {
-            shortcutLabel.stringValue = "⌘\(n)"
-        }
 
         addSubview(iconView)
         addSubview(titleLabel)
@@ -464,8 +490,29 @@ class ResultTileView: NSView {
         ])
     }
 
+    func update(result: SearchResult, shortcutNumber: Int? = nil) {
+        InputTiming.shared.measure(.viewImages) {
+            iconView.setIcon(result.icon, description: result.title)
+        }
+        InputTiming.shared.measure(.viewText) {
+            if titleLabel.stringValue != result.title { titleLabel.stringValue = result.title }
+            let shortcut = shortcutNumber.map { "⌘\($0)" } ?? ""
+            if shortcutLabel.stringValue != shortcut { shortcutLabel.stringValue = shortcut }
+        }
+    }
+
+    override func prepareForReuse() {
+        super.prepareForReuse()
+        iconView.setIcon(nil)
+        titleLabel.stringValue = ""
+        shortcutLabel.stringValue = ""
+        onClick = nil
+        setSelected(false)
+    }
+
     required init?(coder: NSCoder) { fatalError() }
 
+    private var selected = false
     private var accentColor: NSColor = .controlAccentColor
     // Tile selection fill. Defaults to accent @ 0.25 until the theme
     // supplies an explicit selection color.
@@ -478,7 +525,13 @@ class ResultTileView: NSView {
     }
 
     func setSelected(_ selected: Bool) {
-        highlight.backgroundColor = selected ? selectionFill.cgColor : nil
+        self.selected = selected
+        let color = selected ? selectionFill.cgColor : nil
+        guard highlight.backgroundColor != color else { return }
+        CATransaction.begin()
+        CATransaction.setDisableActions(true)
+        highlight.backgroundColor = color
+        CATransaction.commit()
     }
 
     func updateColors(foreground: NSColor, accent: NSColor, selection: NSColor) {
@@ -486,6 +539,7 @@ class ResultTileView: NSView {
         shortcutLabel.textColor = foreground.withAlphaComponent(0.45)
         accentColor = accent
         selectionFill = selection
+        setSelected(selected)
     }
 
     override func updateTrackingAreas() {
