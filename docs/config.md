@@ -14,62 +14,53 @@ This document covers every setting Walter understands. Each section maps
 
 ## `[theme]`
 
-Visual styling of the launcher window.
+| Key | Default | Behavior |
+| --- | --- | --- |
+| `name` | unset | Built-in or user theme name, case-insensitive. Overrides core colors. |
+| `background` | `"#1e1e2e"` | Window background; transparent `#00000000` gives vibrancy-only appearance. |
+| `foreground` | `"#cdd6f4"` | Main text color. |
+| `accent` | `"#cba6f7"` | Accent/selection base color. |
+| `selection` | unset | Otherwise accent at 25% opacity. |
+| `subtitle` | unset | Otherwise foreground at 60% opacity. |
+| `border` | unset | Optional border color. |
+| `placeholder_color` | unset | Otherwise foreground at 50% opacity. |
+| `border_radius` | `12` | Corner radius, clamped to 0–100. |
+| `font` | `"SF Pro"` | Font name, `system`, or empty; fallback to system font. |
+| `font_size` | `14` | Legacy parsed compatibility field; currently does not change rendered sizes. |
+| `font_weight` | `"medium"` | Result-title weight: ultralight, thin, light, regular/normal, medium, semibold, bold, heavy, black. |
+| `blur_material` | `"hudWindow"` | `sidebar`, `popover`, `sheet`; other values use hudWindow. |
 
-| Key                 | Type   | Default       | Notes |
-| ------------------- | ------ | ------------- | ----- |
-| `name`              | string | unset         | Built-in or user theme name. When set, overrides `background` / `foreground` / `accent`. |
-| `background`        | hex    | `"#1e1e2e"`   | CSS-style. `"#00000000"` = transparent (system vibrancy only). |
-| `foreground`        | hex    | `"#cdd6f4"`   | Primary text color. |
-| `accent`            | hex    | `"#cba6f7"`   | Accent fills; default source for the selection highlight. |
-| `selection`         | hex    | unset         | Selection highlight fill. Defaults to `accent` at 25% opacity. |
-| `subtitle`          | hex    | unset         | Subtitle / secondary text. Defaults to `foreground` at 60% opacity. |
-| `border`            | hex    | unset         | Hairline window border. Off when unset. |
-| `placeholder_color` | hex    | unset         | Search-field placeholder text. Defaults to `foreground` at 50% opacity. |
-| `border_radius`     | int    | `12`          | Window corner radius in px. |
-| `font`              | string | `"SF Pro"`    | Any installed font, or `"system"`. |
-| `font_size`         | int    | `14`          | Legacy parsed font-size field; rendered input sizes remain fixed. |
-| `font_weight`       | string | `"medium"`    | Result-title weight: `light`, `regular`, `medium`, `semibold`, `bold`. |
-| `blur_material`     | string | `"hudWindow"` | One of `hudWindow`, `sidebar`, `popover`, `sheet`, `dark`, `light`. |
+The search input uses a fixed 28-point base font and shrinks to a readable
+14-point minimum for long queries. Result fonts are fixed independently of the
+legacy `font_size` field. This inherited mismatch is recorded in the baseline
+audit, not a promise that `font_size` changes the UI.
 
-The optional `selection`, `subtitle`, `border`, and `placeholder_color`
-keys all derive sensible values from the core three colors when omitted,
-so existing themes render identically without specifying them.
+Built-in names:
 
-### Built-in theme presets
+- System: `spotlight`.
+- Dark: `catppuccin-mocha`, `catppuccin-macchiato`, `catppuccin-frappe`, `nord`,
+  `dracula`, `gruvbox`, `solarized-dark`, `rose-pine`, `rose-pine-moon`,
+  `tokyo-night`, `one-dark`, `kanagawa`, `everforest`, `ayu-dark`.
+- Light: `catppuccin-latte`, `solarized-light`, `github-light`, `rose-pine-dawn`,
+  `ayu-light`, `everforest-light`.
 
-Set `name = "<preset>"` to apply one of these without specifying colors:
+Custom themes are local whitespace-separated files:
 
-- **System:** `spotlight` (transparent, system vibrancy only)
-- **Dark:** `catppuccin-mocha`, `catppuccin-macchiato`, `catppuccin-frappe`,
-  `nord`, `dracula`, `gruvbox`, `solarized-dark`, `rose-pine`,
-  `rose-pine-moon`, `tokyo-night`, `one-dark`, `kanagawa`, `everforest`,
-  `ayu-dark`
-- **Light:** `catppuccin-latte`, `solarized-light`, `rose-pine-dawn`,
-  `ayu-light`, `everforest-light`, `github-light`
-
-### Themes <a id="themes"></a>
-
-Drop a plain-text file at `~/.config/walter/themes/<name>.theme`. The
-filename (without extension) becomes the theme name. Format:
-
-```
-# my-cyberpunk.theme
-background  #0a0a23
-foreground  #00ffff
-accent      #ff00ff
-# optional — derive from the above when omitted:
-selection   #1a1a44
-subtitle    #6699aa
-border      #00ffff
+```text
+# ~/.config/walter/themes/example.theme
+background #1a1a2e
+foreground #eaeaea
+accent #ff6b6b
+selection #45475a
+subtitle #6c7086
+border #313244
 ```
 
-Core three keys are required; `selection` / `subtitle` / `border` are
-optional. Whitespace-separated, `#` comments, `bg` / `fg` aliases work.
-Saving any file in the themes directory triggers a hot-reload. Reference
-your custom theme from `[theme]` like a built-in: `name = "my-cyberpunk"`.
-
----
+Three core colors are required; optional palette colors are supported.
+`bg`/`fg` are aliases for background/foreground. Lines starting with `#` are
+comments; a hex color's `#` is data. Filenames without `.theme` are theme names.
+User themes win name collisions with built-ins. Preview does not persist;
+Return saves the selected theme, Escape cancels.
 
 ## `[layout]`
 
@@ -77,8 +68,8 @@ Window geometry and result rendering.
 
 | Key           | Type   | Default                                      | Notes |
 | ------------- | ------ | -------------------------------------------- | ----- |
-| `width`       | int    | `780`                                        | Fixed-scale width in points, capped to 95% of the pointer screen's visible width. |
-| `max_results` | int    | `8`                                          | Maximum visible result rows. Grid mode caps at 3 tile rows × 5 cols regardless. |
+| `width`       | int    | `780`                                        | Width in points, clamped to 320–2400 and capped to 95% of the pointer screen's visible width. |
+| `max_results` | int    | `8`                                          | Clamped to 1–25 visible rows. Grid mode also applies its tile/row caps. |
 | `placeholder` | string | `"Search apps, calculate, convert..."`       | Search field placeholder text. |
 | `mode`        | string | `"list"`                                     | `list` (Alfred-style row list) or `grid` (Spotlight-Tahoe icon tiles). |
 

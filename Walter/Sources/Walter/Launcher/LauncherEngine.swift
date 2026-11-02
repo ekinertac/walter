@@ -259,100 +259,22 @@ class LauncherEngine {
         }
     }
 
-    /// Returns themes (built-in + user-defined) as picker results,
-    /// filtered by query. Used when the UI is in theme-picker mode.
-    /// Built-ins keep their curated order; user themes follow alphabetically
-    /// under a "Custom" group label.
     func themeResults(filter: String) -> [SearchResult] {
-        let currentTheme = config?.theme.name?.lowercased()
+        guard let config else { return [] }
         let icon = NSImage(systemSymbolName: "paintpalette", accessibilityDescription: "Theme")
-
-        let builtins: [(name: String, group: String)] =
-            [("spotlight", "System"),
-             ("catppuccin-mocha", "Dark"), ("catppuccin-macchiato", "Dark"),
-             ("catppuccin-frappe", "Dark"), ("catppuccin-latte", "Light"),
-             ("nord", "Dark"), ("dracula", "Dark"), ("gruvbox", "Dark"),
-             ("solarized-dark", "Dark"), ("solarized-light", "Light"),
-             ("rose-pine", "Dark"), ("rose-pine-moon", "Dark"), ("rose-pine-dawn", "Light"),
-             ("tokyo-night", "Dark"), ("one-dark", "Dark"), ("kanagawa", "Dark"),
-             ("everforest", "Dark"), ("everforest-light", "Light"),
-             ("ayu-dark", "Dark"), ("ayu-light", "Light"), ("github-light", "Light")]
-
-        let userNames = (config?.userThemes.keys ?? Dictionary<String, ThemePreset>().keys)
-            .sorted()
-
-        // Built-ins first, then user themes (excluding any name collisions
-        // that would already be displayed under a built-in slot).
-        let builtinNames = Set(builtins.map { $0.name })
-        let combined: [(name: String, group: String)] =
-            builtins + userNames
-                .filter { !builtinNames.contains($0) }
-                .map { ($0, "Custom") }
-
         let q = filter.trimmingCharacters(in: .whitespaces)
-
-        return combined.compactMap { theme in
-            if !q.isEmpty {
-                let match = fuzzyMatch(query: q, target: theme.name)
-                guard match.matched else { return nil }
-            }
-            let displayName = theme.name.split(separator: "-")
-                .map { $0.prefix(1).uppercased() + $0.dropFirst() }
-                .joined(separator: " ")
-            let isCurrent = theme.name == currentTheme
-            let subtitle = "\(theme.group)\(isCurrent ? " — current" : "")"
-            return SearchResult(
-                title: displayName,
-                subtitle: subtitle,
-                icon: icon,
-                action: .applyTheme(theme.name)
-            )
+        return config.allThemes.keys.sorted().compactMap { name in
+            guard q.isEmpty || fuzzyMatch(query: q, target: name).matched else { return nil }
+            let title = name.split(separator: "-").map { $0.prefix(1).uppercased() + $0.dropFirst() }.joined(separator: " ")
+            let group = config.userThemes[name] == nil ? "Built-in" : "Custom"
+            return SearchResult(title: title, subtitle: group + (config.theme.name == name ? " — current" : ""),
+                icon: icon, action: .applyTheme(name))
         }
     }
 
-    /// Writes the theme name into config.toml. Hot-reload picks it up.
+    /// Theme confirmation writes only the existing config file.
     func applyTheme(name: String) {
-        guard let config = config else { return }
-        let url = config.configURL
-        guard var content = try? String(contentsOf: url, encoding: .utf8) else { return }
-
-        let lines = content.components(separatedBy: "\n")
-        var result: [String] = []
-        var inTheme = false
-        var nameWritten = false
-
-        for line in lines {
-            let trimmed = line.trimmingCharacters(in: .whitespaces)
-
-            if trimmed.hasPrefix("[") && trimmed.hasSuffix("]") {
-                if inTheme && !nameWritten {
-                    result.append("name = \"\(name)\"")
-                    nameWritten = true
-                }
-                let section = String(trimmed.dropFirst().dropLast())
-                inTheme = (section == "theme")
-            }
-
-            if inTheme {
-                let key = trimmed.split(separator: "=", maxSplits: 1).first?
-                    .trimmingCharacters(in: .whitespaces) ?? ""
-                if key == "name" || key == "# name" {
-                    result.append("name = \"\(name)\"")
-                    nameWritten = true
-                    continue
-                }
-            }
-
-            result.append(line)
-        }
-
-        if !nameWritten {
-            // Shouldn't happen, but just in case
-            result.insert("name = \"\(name)\"", at: result.firstIndex(of: "[theme]")?.advanced(by: 1) ?? result.endIndex)
-        }
-
-        content = result.joined(separator: "\n")
-        try? content.write(to: url, atomically: true, encoding: .utf8)
+        config?.selectTheme(name)
     }
 
     /// Resolves the configured `engine` string into a (display name, URL)

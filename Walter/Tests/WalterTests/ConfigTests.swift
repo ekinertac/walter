@@ -12,6 +12,7 @@ struct ConfigTests {
         #expect(config.layout.maxResults == 8)
         #expect(config.layout.placeholder == "Search apps, calculate, convert...")
         #expect(config.userThemesDir == fixture.file("themes"))
+        #expect(config.userThemes["example"]?.background == "#1a1a2e")
         #expect(builtinThemes.count == 21)
         #expect(builtinThemes["dracula"]?.accent == "#bd93f9")
         let defaults = try String(contentsOf: config.configURL, encoding: .utf8)
@@ -52,4 +53,77 @@ struct ConfigTests {
         #expect(config.aliases.isEmpty)
     }
 
+    @Test func rejectsLegacyCommandsAndArbitraryPaths() throws {
+        let fixture = try TemporaryDirectory()
+        let url = fixture.file("config.toml")
+        try """
+        [aliases]
+        flat = "!echo ignored"
+        spaced = "  !echo {query}"
+        file = "/private/tmp/file.txt"
+        badApp = "/System/Applications/Test.app"
+        fileURL = "file:///private/tmp/file.txt"
+        scheme = "javascript:alert(1)"
+        good = "https://example.invalid/{query}"
+        [aliases.named]
+        name = "Legacy command"
+        url = "!echo {query}"
+        [aliases.legacyValue]
+        value = "!https://example.invalid"
+        [aliases.legacyPath]
+        path = "!/Applications/Test.app"
+        [aliases.commandKey]
+        cmd = "echo ignored"
+        """.write(to: url, atomically: true, encoding: .utf8)
+        let config = ConfigManager(configURL: url, watchForChanges: false)
+        #expect(config.aliases == ["good": "https://example.invalid/{query}"])
+        try "[aliases]\ngood = \"!echo replaced\"\n".write(to: url, atomically: true, encoding: .utf8)
+        config.reload()
+        #expect(config.aliases.isEmpty)
+    }
+
+    @Test func themeRoundTripPreservesOtherSections() throws {
+        let fixture = try TemporaryDirectory()
+        let config = ConfigManager(configURL: fixture.file("config.toml"), watchForChanges: false)
+        config.selectTheme("dracula")
+        config.reload()
+        #expect(config.theme.name == "dracula")
+        #expect(config.theme.background == "#282a36")
+        config.selectTheme("example")
+        config.reload()
+        #expect(config.theme.background == "#1a1a2e")
+        #expect(config.layout.width == 780)
+        let before = try String(contentsOf: config.configURL, encoding: .utf8)
+        config.selectTheme("not-a-theme\n[aliases]")
+        #expect(try String(contentsOf: config.configURL, encoding: .utf8) == before)
+    }
+
+    @MainActor @Test func hotReloadStopsReliably() async throws {
+        let fixture = try TemporaryDirectory()
+        let config = ConfigManager(configURL: fixture.file("config.toml"))
+        defer { config.stopWatching() }
+        var reloads = 0
+        config.onChange = { reloads += 1 }
+        try "[layout]\nplaceholder = \"Watched\"\n".write(to: config.configURL, atomically: true, encoding: .utf8)
+        for _ in 0..<40 {
+            if config.layout.placeholder == "Watched" { break }
+            try await Task.sleep(nanoseconds: 50_000_000)
+        }
+        #expect(config.layout.placeholder == "Watched")
+        try "background #111111\nforeground #eeeeee\naccent #abcdef\nselection #222222\n".write(
+            to: config.userThemesDir.appendingPathComponent("fresh.theme"), atomically: true, encoding: .utf8
+        )
+        for _ in 0..<40 {
+            if config.userThemes["fresh"] != nil { break }
+            try await Task.sleep(nanoseconds: 50_000_000)
+        }
+        #expect(config.userThemes["fresh"]?.accent == "#abcdef")
+        #expect(config.userThemes["fresh"]?.selection == "#222222")
+        config.stopWatching()
+        let stoppedAt = reloads
+        try "[layout]\nplaceholder = \"Stopped\"\n".write(to: config.configURL, atomically: true, encoding: .utf8)
+        try await Task.sleep(nanoseconds: 300_000_000)
+        #expect(reloads == stoppedAt)
+        #expect(config.layout.placeholder == "Watched")
+    }
 }

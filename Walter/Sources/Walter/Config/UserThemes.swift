@@ -55,13 +55,10 @@ private func parseThemeFile(at url: URL) -> ThemePreset? {
     var selection: String?, subtitle: String?, border: String?
 
     for rawLine in content.components(separatedBy: .newlines) {
-        // Strip everything after `#` — comments.
-        var line = rawLine
-        if let hashIdx = line.firstIndex(of: "#") {
-            line = String(line[..<hashIdx])
-        }
-        let trimmed = line.trimmingCharacters(in: .whitespaces)
-        if trimmed.isEmpty { continue }
+        // A color's leading # is data, not a comment delimiter. Whole-line
+        // comments are skipped; trailing comments are ignored by tokenization.
+        let trimmed = rawLine.trimmingCharacters(in: .whitespaces)
+        if trimmed.isEmpty || trimmed.hasPrefix("#") { continue }
 
         // Tokenise on whitespace; first token is the key, rest is the value.
         let tokens = trimmed.split(whereSeparator: { $0.isWhitespace })

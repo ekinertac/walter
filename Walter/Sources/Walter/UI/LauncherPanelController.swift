@@ -21,7 +21,6 @@ class LauncherPanelController: NSObject {
     private var selectedIndex = 0
     private var previousApp: NSRunningApplication?
     private var isThemePicker = false
-    private var themeBeforePicker: String?
     var suppressConfigRebuild = false
 
     init(config: ConfigManager) {
@@ -44,8 +43,8 @@ class LauncherPanelController: NSObject {
         backgroundLayer = CALayer()
         backgroundLayer.cornerRadius = cornerRadius
         backgroundLayer.masksToBounds = true
-        backgroundLayer.backgroundColor = (NSColor(hex: config.theme.background) ?? NSColor(white: 0.1, alpha: 1))
-            .withAlphaComponent(0.92).cgColor
+        let background = NSColor(hex: config.theme.background) ?? NSColor(white: 0.1, alpha: 1)
+        backgroundLayer.backgroundColor = background.withAlphaComponent(background.alphaComponent * 0.92).cgColor
 
         // --- Vibrancy overlay (adds blur on top of the color) ---
         vibrancyView = NSVisualEffectView()
@@ -226,6 +225,8 @@ class LauncherPanelController: NSObject {
 
     func hide() {
         panel.orderOut(nil)
+        if isThemePicker { restoreConfiguredTheme() }
+        suppressConfigRebuild = false
         resetState()
         if let app = previousApp {
             app.activate()
@@ -266,6 +267,7 @@ class LauncherPanelController: NSObject {
         adjustInputFontSize()
         selectedIndex = 0
         isThemePicker = false
+        setPlaceholder(config.layout.placeholder)
         updateResults(query: "")
     }
 
@@ -283,6 +285,7 @@ class LauncherPanelController: NSObject {
         applyResultColors()
         resizePanelToFit(resultCount: results.count, results: results)
         separator.isHidden = results.isEmpty
+        if isThemePicker { notifyPreviewIfNeeded() }
     }
 
     /// Resolves the configured theme palette (with fallbacks for the
@@ -366,16 +369,20 @@ class LauncherPanelController: NSObject {
 
     // MARK: - Theme preview
 
-    /// Applies a theme visually on the live panel without rebuild.
-    /// Also writes to config so Enter just needs to exit.
+    /// Preview is local UI only; Enter explicitly persists the chosen theme.
     private func previewTheme(_ name: String) {
-        suppressConfigRebuild = true
-        launcher.applyTheme(name: name)
-
-        // Look up across built-in AND user themes so previewing a custom
-        // theme also picks up its optional selection/subtitle colors.
         guard let preset = config.allThemes[name] else { return }
+        suppressConfigRebuild = true
+        paintTheme(preset)
+    }
 
+    private func restoreConfiguredTheme() {
+        paintTheme(ThemePreset(background: config.theme.background,
+            foreground: config.theme.foreground, accent: config.theme.accent,
+            selection: config.theme.selection, subtitle: config.theme.subtitle, border: config.theme.border))
+    }
+
+    private func paintTheme(_ preset: ThemePreset) {
         let bg = NSColor(hex: preset.background) ?? NSColor(white: 0.1, alpha: 1)
         let palette = Self.resolvePalette(
             foreground: preset.foreground,
@@ -387,10 +394,10 @@ class LauncherPanelController: NSObject {
         // Background — transparent bg means "system vibrancy only" (Spotlight look)
         CATransaction.begin()
         CATransaction.setDisableActions(true)
-        if preset.background.contains("00000000") || preset.background.count <= 2 {
+        if bg.alphaComponent == 0 {
             backgroundLayer.backgroundColor = CGColor.clear
         } else {
-            backgroundLayer.backgroundColor = bg.withAlphaComponent(0.92).cgColor
+            backgroundLayer.backgroundColor = bg.withAlphaComponent(bg.alphaComponent * 0.92).cgColor
         }
         CATransaction.commit()
 
@@ -459,18 +466,13 @@ class LauncherPanelController: NSObject {
 
     private func cancelSelection() {
         if isThemePicker {
-            if let original = themeBeforePicker {
-                previewTheme(original)
-            }
+            restoreConfiguredTheme()
             suppressConfigRebuild = false
-            themeBeforePicker = nil
             isThemePicker = false
             searchField.stringValue = ""
             setPlaceholder(config.layout.placeholder)
             updateResults(query: "")
-        } else {
-            hide()
-        }
+        } else { hide() }
     }
 
     private func confirmSelection() {
@@ -478,20 +480,15 @@ class LauncherPanelController: NSObject {
 
         switch result.action {
         case .enterThemePicker:
-            themeBeforePicker = config.theme.name
             isThemePicker = true
             searchField.stringValue = ""
             setPlaceholder("Filter themes...")
             updateResults(query: "")
-            if let first = resultsView.result(at: 0), case .applyTheme(let name) = first.action {
-                previewTheme(name)
-            }
             return
 
-        case .applyTheme:
-            // Enter confirms — theme already written by preview
+        case .applyTheme(let name):
+            launcher.applyTheme(name: name)
             suppressConfigRebuild = false
-            themeBeforePicker = nil
             isThemePicker = false
             setPlaceholder(config.layout.placeholder)
             hide()
