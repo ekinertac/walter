@@ -1,16 +1,19 @@
-# Walter Configuration Reference
+# Walter configuration reference
 
-Walter reads its config from `~/.config/walter/config.toml`. The file is
-auto-created on first launch with every option present and commented.
-Saving the file applies changes live — no relaunch needed.
+Default config: `~/.config/walter/config.toml`. `WALTER_CONFIG` overrides that
+file's path. Themes always live in sibling `themes/`; the app seeds
+`example.theme` if missing. Config/theme changes reload locally without showing
+a hidden popup. Theme selection writes only the config file. There is no
+`UserDefaults`, history, ranking database, favicon cache, or new storage scheme.
 
-Themes can also be loaded from `~/.config/walter/themes/*.theme` (plain
-text, see [Themes](#themes) below).
+## Parser subset
 
-This document covers every setting Walter understands. Each section maps
-1:1 to a `[section]` heading in `config.toml`.
-
----
+Sections, `key = value`, quoted strings (straight or smart double quotes),
+booleans, numbers, and comma-separated `excluded_apps` are supported. Whole-line
+comments begin with `#`; inline comments after quoted values are supported.
+This is not full TOML: no arbitrary arrays, escaping, or general nested tables.
+Unknown/removed settings are ignored. Missing values use model defaults.
+An invalid hotkey is reported rather than silently interpreted as Space.
 
 ## `[theme]`
 
@@ -64,23 +67,12 @@ Return saves the selected theme, Escape cancels.
 
 ## `[layout]`
 
-Window geometry and result rendering.
-
-| Key           | Type   | Default                                      | Notes |
-| ------------- | ------ | -------------------------------------------- | ----- |
-| `width`       | int    | `780`                                        | Width in points, clamped to 320–2400 and capped to 95% of the pointer screen's visible width. |
-| `max_results` | int    | `8`                                          | Clamped to 1–25 visible rows. Grid mode also applies its tile/row caps. |
-| `placeholder` | string | `"Search apps, calculate, convert..."`       | Search field placeholder text. |
-| `mode`        | string | `"list"`                                     | `list` (Alfred-style row list) or `grid` (Spotlight-Tahoe icon tiles). |
-
-### List vs grid mode
-
-- **`list`** — one row per result, icon + title + subtitle. Default.
-  Best for mixed content (calculator, conversions, Settings panes).
-- **`grid`** — 5-column tile sheet, large icons with a single label.
-  Caps at 3 rows = 15 tiles. Computed answers (calculator, conversions)
-  appear as a banner above the grid; the web-search fallback appears as
-  a banner below.
+| Key | Default | Behavior |
+| --- | --- | --- |
+| `width` | `780` | Points, clamped to 320–2400 and to 95% of the pointer screen's visible width. |
+| `max_results` | `8` | 1–25 visible rows in list mode; grid also applies its own tile/row caps. |
+| `placeholder` | `"Search apps, calculate, convert..."` | Empty-query prompt. |
+| `mode` | `"list"` | `list` or `grid` (other values use list). |
 
 Scale is fixed at its default. Position/geometry are not saved. The non-draggable
 popup is horizontally centered on the screen containing the pointer, with its
@@ -120,128 +112,68 @@ Cmd+1…9 activates a numbered result, Cmd+C copies an answer/URL or revalidated
 allowed app path (selected query text copies normally). Cmd+Return reveals only
 a revalidated allowed app in Finder, never an arbitrary file. Grid horizontal
 arrows navigate tiles; on computed/web banners they retain text editing.
-The existing tray has Quit; popup-local Cmd+Q/Cmd+, behavior is deferred.
+There is no menu-bar or Dock icon. While the popup is active, Cmd+Q quits and
+Cmd+, shows an alert with the actual config path and explains automatic reload.
+These commands are local, not globally registered; they take precedence over a
+matching configured close binding. The alert opens neither an editor nor Finder.
+Dismissal restores input to the current popup only if it is still visible and
+Walter is active. Hidden startup and hotkey-registration error alerts remain.
 
 ## `[search]`
 
-Behavior of the search engine, app indexer, and trailing fallback row.
-
-| Key                    | Type   | Default    | Notes |
-| ---------------------- | ------ | ---------- | ----- |
-| `web_search`           | string | `"google"` | Web search target for the trailing fallback row. Name or URL template (see below). |
-| `show_path`            | bool   | `true`     | Show file path as result subtitle. Hide for a cleaner list. |
-| `excluded_apps`        | csv    | `""`       | Comma-separated app display names to hide from the index. |
-
-### `web_search`
-
-Built-in shorthands: `"google"`, `"duckduckgo"` (or `"ddg"`), `"bing"`.
-
-For anything else, pass a URL template containing `{query}` where the
-search term should land. Walter URL-encodes the query before substitution:
+| Key | Default | Behavior |
+| --- | --- | --- |
+| `web_search` | `"google"` | `google`, `duckduckgo`/`ddg`, `bing`, or an HTTP(S) URL template containing `{query}`. |
+| `show_path` | `true` | Show an app's path in its result subtitle. |
+| `excluded_apps` | empty | Comma-separated display names, case-insensitive. |
 
 ```toml
+[search]
 web_search = "https://kagi.com/search?q={query}"
-web_search = "https://html.duckduckgo.com/html/?q={query}"
-web_search = "https://you.com/search?q={query}"
+show_path = true
+excluded_apps = Example, Another App
 ```
 
-The trailing fallback row reads "Search <name> for …" — for URL
-templates the host name is shown.
+Web search is the fallback. Query substitution is percent-encoded (including
+parameter separators such as `&`); there are no suggestions, prefetches, URL
+checks over the network, or remote icons. Invalid custom templates use the
+local Google fallback. Only activation asks the browser to open the URL.
 
-### `excluded_apps`
-
-Hide an indexed app from search by adding its display name (case-insensitive):
-
-```toml
-excluded_apps = Siri, News, Stocks
-```
-
-For internal helper bundles that show up despite Walter's filters
-(rare), this is the escape hatch.
-
-Apps are discovered only under `/Applications`, including ordinary subfolders.
-Both lexical and resolved paths must stay inside that root. Embedded helpers,
-packages and escaping symlinks are excluded. App activation, path copying and
-Finder reveal revalidate the same boundary. Extra app roots are not supported.
-
----
+App discovery is fixed to `/Applications`, including ordinary subfolders but
+excluding embedded apps/helpers and other package contents. Both lexical and
+resolved paths must remain under the root; `/Applications-other` is not inside.
+Internal symlinks are deduplicated; outside symlinks are excluded. Activation
+revalidates so a stale/changed index cannot open an arbitrary path.
 
 ## `[aliases]`
 
-User-defined shortcuts. Type the alias key in the launcher to fire it.
-
-Values can be:
-
-- **URL** (`http://…`, `https://…`) — opened in the default browser.
-- **App path** — a real app whose resolved path remains inside `/Applications`.
-  Arbitrary files, outside-root apps, and parameterized app paths are rejected.
-
-Add `{query}` to an HTTP(S) URL to make the alias parameterized:
+Only HTTP(S) URLs and real allowed apps are accepted. Plain app aliases must
+resolve to an `.app` bundle with `CFBundlePackageType = APPL` inside
+`/Applications`, not inside another package. Arbitrary files/directories,
+`file:` URLs, other schemes, parameterized app paths, and legacy `!` commands
+(including leading-whitespace variants) are rejected, not reinterpreted.
 
 ```toml
 [aliases]
-y  = "https://www.youtube.com/results?search_query={query}"
-gh-s = "https://github.com/search?q={query}"
-```
+gh = "https://github.com"
+example = "/Applications/Example.app"
 
-Then type `y cat videos` — Walter substitutes `cat videos` for `{query}`,
-URL-encodes it for URL aliases, and fires.
-
-When a parameterized alias matches, Walter suppresses fuzzy app/pane
-matches for the same query — the user's intent is explicit. The
-trailing web-search fallback still shows so escape is always one click
-away.
-
-### Display names (sub-table form)
-
-The flat `key = "value"` form uses the key as the displayed result title.
-For nicer labels, use the sub-table form:
-
-```toml
 [aliases.y]
 name = "YouTube"
-url  = "https://www.youtube.com/results?search_query={query}"
-
-[aliases.gh-s]
-name = "GitHub Search"
-url  = "https://github.com/search?q={query}"
-
-[aliases.?]
-name = "Ask Claude"
-url  = "https://claude.ai/new?q={query}"
+url = "https://www.youtube.com/results?search_query={query}"
 ```
 
-The accepted value keys are `url`, `value`, and `path` — they all
-populate the alias's value. `name` is always the optional display label.
-Legacy `!` commands (including whitespace-prefixed values) and `cmd` fields
-are rejected, not interpreted as paths or URLs.
+The key is fuzzy-matched. A URL template triggers on `<key> <text>`; encoded text
+replaces `{query}` and suppresses unrelated fuzzy results. Web fallback remains.
+URL aliases use the generic link icon; indexed apps retain native icons.
+`name` is an optional display label; sub-table value keys are `url`, `value`,
+and `path` (all subject to the same validation). Legacy `cmd` is ignored.
 
-Result rows then read **"YouTube → cat videos"** instead of
-**"y → cat videos"**.
+## Removed settings and legacy data
 
----
-
-## File locations
-
-| Path                                         | Purpose |
-| -------------------------------------------- | ------- |
-| `~/.config/walter/config.toml`               | Main config (this file). |
-| `~/.config/walter/themes/`                   | User-defined `*.theme` files. Auto-created with example. |
-
-Walter does not record queries or app usage. Results use ordinary fuzzy
-matching, with alphabetical title ordering for equal scores; Up/Down navigate
-results rather than recalling queries.
-
-Legacy `history.json` and `frecency.json` files are no longer read or written.
-Existing personal copies are left untouched; no automatic cleanup is performed.
-
-## Startup and login
-
-Walter starts hidden on every launch, including manual and login launches. Only
-the launcher hotkey shows/toggles the popup; config reload does not reveal a
-hidden popup. The retained tray offers themes, About, and Quit, not a launcher
-toggle or login setting. Explicit hotkey-registration error alerts may appear.
-
-To start Walter at login, add it yourself in macOS System Settings → General →
-Login Items. Walter does not register, query, or unregister login items.
-Existing registrations are left untouched; manage them in System Settings.
+`layout.position`, `layout.scale`, `search.favicon_service`,
+`search.show_system_commands`, `search.app_dirs`, `search.file_dirs`,
+`search.file_prefix`, and `general.editor` have no effect. Walter does not
+access legacy history/frecency JSON, favicon caches, or saved preferences.
+It does not delete those files, clear permission grants, or unregister old
+login items automatically. See [optional user cleanup](uninstall.md).
