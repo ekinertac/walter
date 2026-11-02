@@ -69,6 +69,15 @@ Raycast wins on plugin breadth and built-in AI, but its 2.0 rewrite moved the UI
 - Currency conversion — `$100 in euro`, `500 try in usd`, live rates
 - Unit conversion — `10 km in miles`, `72 f in c`, `1 tb in gb`
 
+Calculator examples: `100/7` → approximately `14.2857142857`, `2^3^2` → `512`,
+`-2^2` → `-4`, `sqrt(144)` → `12`, `log(100)` → `2` (base 10).
+Powers (`^` or `**`) are right-associative and bind more tightly than unary signs.
+Modulo is floating-point truncating remainder. Invalid/incomplete expressions,
+zero division/modulo, and non-finite results show no calculator answer. Parsing
+is bounded to 2,048 UTF-8 bytes, 512 tokens, and nesting depth 64. Tiny values use
+scientific notation instead of rounding to zero. Formatting/copy use the current
+locale, while numeric input uses `.` as decimal separator.
+
 **Aliases**
 - Plain — `gh = "https://github.com"`, `ip = "!curl -s ifconfig.me"`, `mail = "/System/Applications/Mail.app"`
 - Parameterized — add `{query}` to make `y cat videos` open `youtube.com/results?search_query=cat%20videos`
