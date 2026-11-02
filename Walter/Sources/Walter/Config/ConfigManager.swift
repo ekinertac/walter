@@ -28,8 +28,6 @@ class ConfigManager {
     struct Layout {
         var width: Int = 780
         var maxResults: Int = 8
-        var position: String = "center"
-        var scale: Float = 1.0
         var placeholder: String = "Search apps, calculate, convert..."
         var mode: String = "list"     // "list" (Alfred-style) | "grid" (Spotlight-Tahoe-style)
     }
@@ -68,9 +66,8 @@ class ConfigManager {
     private var fileMonitor: DispatchSourceFileSystemObject?
     private var themesMonitor: DispatchSourceFileSystemObject?
 
-    func s(_ base: CGFloat) -> CGFloat {
-        base * CGFloat(layout.scale)
-    }
+    // Fixed default sizing; no configurable scale or persisted geometry.
+    func s(_ base: CGFloat) -> CGFloat { base }
 
     init(configURL: URL? = nil, watchForChanges: Bool = true, apps: AllowedApps = AllowedApps()) {
         self.configURL = configURL ?? ProcessInfo.processInfo.environment["WALTER_CONFIG"].map { URL(fileURLWithPath: $0) }
@@ -147,7 +144,7 @@ class ConfigManager {
 #
 # Sections (in order below):
 #   [theme]        — colors, fonts, blur, corner radius
-#   [layout]       — window size, position, scale, list-vs-grid mode
+#   [layout]       — fixed-scale window size and list-vs-grid mode
 #   [keybindings]  — global hotkey + close key
 #   [aliases]      — user shortcuts, plain or parameterized
 
@@ -188,10 +185,8 @@ blur_material = "hudWindow"
 # Layout
 # ---------------------------------------------------------------------------
 [layout]
-width       = 780                    # base width in pixels (before scaling)
+width       = 780                    # fixed-scale width in points
 max_results = 8                      # max visible result rows
-position    = "center"               # center | top
-scale       = 1.0                    # UI scale: 1.0 = default, 2.0 = double
 placeholder = "Search apps, calculate, convert..."
 # mode picks the result renderer:
 #   list — Alfred/Raycast-style row list (default)
@@ -369,8 +364,6 @@ show_path            = true          # show file path in result subtitle
             // Layout
             case ("layout", "width"):        layout.width = Int(value) ?? layout.width
             case ("layout", "max_results"):  layout.maxResults = Int(value) ?? layout.maxResults
-            case ("layout", "position"):     layout.position = value
-            case ("layout", "scale"):        layout.scale = Float(value) ?? layout.scale
             case ("layout", "placeholder"):  layout.placeholder = value
             case ("layout", "mode"):         layout.mode = value
             // Keybindings

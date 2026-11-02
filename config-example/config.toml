@@ -6,15 +6,13 @@
 background    = "#1e1e2e"   # window background (hex)
 foreground    = "#cdd6f4"   # primary text colour
 accent        = "#cba6f7"   # selection highlight, active states
-border_radius = 12          # window corner radius in pixels (before scaling)
+border_radius = 12          # window corner radius in pixels (fixed scale)
 font          = "SF Pro"
 font_size     = 14
 
 [layout]
-width       = 780           # base window width in pixels (before scaling)
+width       = 780           # base window width in pixels (fixed scale)
 max_results = 8             # how many results to show
-position    = "center"      # center | top | cursor
-scale       = 1.0           # UI scale factor: 1.0 = default, 1.5 = 50% bigger, 2.0 = double
 
 [keybindings]
 open    = "Alt+Space"

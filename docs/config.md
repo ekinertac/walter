@@ -28,7 +28,7 @@ Visual styling of the launcher window.
 | `placeholder_color` | hex    | unset         | Search-field placeholder text. Defaults to `foreground` at 50% opacity. |
 | `border_radius`     | int    | `12`          | Window corner radius in px. |
 | `font`              | string | `"SF Pro"`    | Any installed font, or `"system"`. |
-| `font_size`         | int    | `14`          | Search input font size at scale 1.0. |
+| `font_size`         | int    | `14`          | Legacy parsed font-size field; rendered input sizes remain fixed. |
 | `font_weight`       | string | `"medium"`    | Result-title weight: `light`, `regular`, `medium`, `semibold`, `bold`. |
 | `blur_material`     | string | `"hudWindow"` | One of `hudWindow`, `sidebar`, `popover`, `sheet`, `dark`, `light`. |
 
@@ -77,10 +77,8 @@ Window geometry and result rendering.
 
 | Key           | Type   | Default                                      | Notes |
 | ------------- | ------ | -------------------------------------------- | ----- |
-| `width`       | int    | `780`                                        | Base width in px before `scale` is applied. |
+| `width`       | int    | `780`                                        | Fixed-scale width in points, capped to 95% of the pointer screen's visible width. |
 | `max_results` | int    | `8`                                          | Maximum visible result rows. Grid mode caps at 3 tile rows × 5 cols regardless. |
-| `position`    | string | `"center"`                                   | `center` or `top`. Center vertically or pin to top edge. |
-| `scale`       | float  | `1.0`                                        | UI scale factor — `2.0` doubles every dimension. |
 | `placeholder` | string | `"Search apps, calculate, convert..."`       | Search field placeholder text. |
 | `mode`        | string | `"list"`                                     | `list` (Alfred-style row list) or `grid` (Spotlight-Tahoe icon tiles). |
 
@@ -93,10 +91,12 @@ Window geometry and result rendering.
   appear as a banner above the grid; the web-search fallback appears as
   a banner below.
 
-Window position is remembered across launches and stays visually
-anchored when `scale` changes between sessions.
-
----
+Scale is fixed at its default. Position/geometry are not saved. The non-draggable
+popup is horizontally centered on the screen containing the pointer, with its
+top edge 30% down the visible area. It keeps that top anchor as results grow,
+shifting upward only when needed to stay within the visible bottom edge. It
+falls back to the main/first screen or a default rectangle when no screen is
+available. Results are height-capped to that screen.
 
 ## `[keybindings]`
 

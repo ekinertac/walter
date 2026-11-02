@@ -1,8 +1,4 @@
-// KeyablePanel.swift — NSPanel subclass that accepts keyboard input and dragging
-//
-// Borderless panels can't become key and can't be dragged by default.
-// This subclass fixes both: typing works, and clicking anywhere on the
-// panel background starts a window drag (like dragging a title bar).
+// Borderless, fixed-position panel with local keyboard shortcuts.
 
 import AppKit
 
@@ -18,11 +14,12 @@ class KeyablePanel: NSPanel {
     var onQuickSelect: ((Int) -> Void)?       // Cmd+1…9 → launch Nth result
     var onCopyResult: (() -> Bool)?           // Cmd+C → copy result; returns true if handled
 
-    // Allow dragging the borderless panel by clicking anywhere on the background.
-    // Text fields and other controls still receive clicks normally — this only
-    // fires when the click lands on the panel's content view itself.
     override var isMovableByWindowBackground: Bool {
-        get { true }
+        get { false }
+        set {}
+    }
+    override var isMovable: Bool {
+        get { false }
         set {}
     }
 

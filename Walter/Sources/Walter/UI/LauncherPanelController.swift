@@ -1,6 +1,6 @@
 // LauncherPanelController.swift — The floating launcher window
 //
-// All dimensions use config.s() for the global scale factor.
+// Fixed scale, dynamic height; centered horizontally, top edge 30% down the pointer's screen.
 // Theme colors are applied to a background layer + vibrancy overlay.
 // Live theme preview paints colors directly without panel rebuild.
 
@@ -27,7 +27,7 @@ class LauncherPanelController: NSObject {
     init(config: ConfigManager) {
         self.config = config
 
-        let screenFrame = NSScreen.main?.visibleFrame ?? NSRect(x: 0, y: 0, width: 1440, height: 900)
+        let screenFrame = Self.pointerScreenFrame
         let width = min(config.s(CGFloat(config.layout.width)), screenFrame.width * 0.95)
         let inputHeight = config.s(72)
         let cornerRadius = config.s(CGFloat(config.theme.borderRadius))
@@ -77,10 +77,7 @@ class LauncherPanelController: NSObject {
         let placeholderColor = config.theme.placeholderColor.flatMap { NSColor(hex: $0) }
             ?? fgColor.withAlphaComponent(0.5)
         let searchFont = Self.resolveFont(name: config.theme.font, size: config.s(28), weight: .light)
-        // CenteredTextField vertically centers text inside the (much taller
-        // at high `layout.scale`) field, so when the auto-shrink kicks in
-        // the cursor and glyphs stay on the field's midline instead of
-        // sticking to the top.
+        // Keep glyphs and cursor centered even when a long query shrinks.
         searchField = CenteredTextField()
         searchField.font = searchFont
         // Attributed placeholder must carry the field's font explicitly —
@@ -94,12 +91,7 @@ class LauncherPanelController: NSObject {
         searchField.focusRingType = .none
         searchField.drawsBackground = false
         // Lock the cell to single-line, horizontally-scrolling behavior.
-        // Without this, very long queries at large `layout.scale` values
-        // wrap to multiple visual lines and bleed past the top of the
-        // input area (a long path like
-        // `subl ~/Code/.../specs/2026-06-26-qwok-design.md` renders the
-        // first half above the search icon and clips against the panel
-        // edge).
+        // Long queries must not wrap outside the input area.
         searchField.cell?.usesSingleLineMode = true
         searchField.cell?.wraps = false
         searchField.cell?.isScrollable = true
@@ -222,7 +214,7 @@ class LauncherPanelController: NSObject {
         // a rebuild. Doing it here means "I just installed this app, why
         // doesn't Walter see it" can be answered with "open Walter".
         launcher.refreshIndexes()
-        restoreOrCenterPosition()
+        positionOnScreen()
         // Sync background layer size
         backgroundLayer.frame = panel.contentView?.bounds ?? .zero
         panel.makeKeyAndOrderFront(nil)
@@ -231,7 +223,6 @@ class LauncherPanelController: NSObject {
     }
 
     func hide() {
-        savePosition()
         panel.orderOut(nil)
         resetState()
         if let app = previousApp {
@@ -248,56 +239,20 @@ class LauncherPanelController: NSObject {
         if panel.isVisible { hide() }
     }
 
-    // MARK: - Position save/restore
-
-    private static let posXKey = "walter.panel.x"
-    private static let posTopYKey = "walter.panel.topY"
-    private static let posScaleKey = "walter.panel.scale"
-
-    private func restoreOrCenterPosition() {
-        let defaults = UserDefaults.standard
-        if defaults.object(forKey: Self.posXKey) != nil {
-            let x = CGFloat(defaults.double(forKey: Self.posXKey))
-            let topY = CGFloat(defaults.double(forKey: Self.posTopYKey))
-            let savedScale = CGFloat(defaults.double(forKey: Self.posScaleKey))
-            let currentScale = CGFloat(config.layout.scale)
-
-            // Adjust topY for scale change so the window stays visually fixed
-            let adjustedTopY = topY + (savedScale - currentScale) * baseWindowHeight * 0.5
-
-            let y = adjustedTopY - panel.frame.height
-            let origin = NSPoint(x: x, y: y)
-            if isOnScreen(origin: origin) {
-                panel.setFrameOrigin(origin)
-                return
-            }
-        }
-        centerOnScreen()
+    private static var pointerScreenFrame: NSRect {
+        PopupGeometry.visibleFrame(pointer: NSEvent.mouseLocation,
+            screens: NSScreen.screens.map { ($0.frame, $0.visibleFrame) }, fallback: NSScreen.main?.visibleFrame)
     }
 
-    private var baseWindowHeight: CGFloat {
-        // Input field height without results
-        return CGFloat(72)
-    }
-
-    private func centerOnScreen() {
-        guard let screen = NSScreen.main else { return }
-        let screenFrame = screen.visibleFrame
-        let x = screenFrame.midX - panel.frame.width / 2
-        let y = screenFrame.midY + screenFrame.height * 0.2
-        panel.setFrameOrigin(NSPoint(x: x, y: y))
-    }
-
-    private func isOnScreen(origin: NSPoint) -> Bool {
-        let panelRect = NSRect(origin: origin, size: panel.frame.size)
-        return NSScreen.screens.contains { panelRect.intersects($0.visibleFrame) }
-    }
-
-    private func savePosition() {
-        let frame = panel.frame
-        UserDefaults.standard.set(Double(frame.origin.x), forKey: Self.posXKey)
-        UserDefaults.standard.set(Double(frame.origin.y + frame.height), forKey: Self.posTopYKey)
-        UserDefaults.standard.set(Double(config.layout.scale), forKey: Self.posScaleKey)
+    private func positionOnScreen(height: CGFloat? = nil) {
+        let frame = PopupGeometry.fittedFrame(width: CGFloat(config.layout.width),
+            height: height ?? panel.frame.height, in: Self.pointerScreenFrame)
+        guard panel.frame != frame else { return }
+        // Size and position change together. Do not force drawing inside the
+        // text-change delegate; AppKit can render input/results together at the
+        // normal display pass, after the entire update has completed.
+        panel.setFrame(frame, display: false, animate: false)
+        panel.contentView?.needsDisplay = true
     }
 
     // MARK: - State
@@ -359,15 +314,7 @@ class LauncherPanelController: NSObject {
         let inputHeight = config.s(72)
         let separatorHeight: CGFloat = resultCount > 0 ? config.s(18) : 0
         let resultsHeight = resultsView.contentHeight(for: results, maxRows: config.layout.maxResults)
-        let screenHeight = NSScreen.main?.visibleFrame.height ?? 900
-        let maxHeight = screenHeight * 0.9
-        let newHeight = min(inputHeight + separatorHeight + resultsHeight, maxHeight)
-
-        var frame = panel.frame
-        let delta = newHeight - frame.height
-        frame.origin.y -= delta
-        frame.size.height = newHeight
-        panel.setFrame(frame, display: true, animate: false)
+        positionOnScreen(height: inputHeight + separatorHeight + resultsHeight)
 
         // Keep background layer in sync with the new frame
         CATransaction.begin()
@@ -542,12 +489,7 @@ class LauncherPanelController: NSObject {
 
     /// Shrinks the search input's font when the text is wider than the
     /// field can display at the base size, with a hard floor so it never
-    /// becomes unreadable. At large `layout.scale` values (e.g. 3.0) the
-    /// base font is ~84pt — a long path like
-    /// `subl ~/Code/qwok/docs/superpowers/specs/2026-06-26-qwok-design.md`
-    /// is multiple hundreds of points wide. Without this, the field's
-    /// horizontal scroll hides everything but the tail, making it
-    /// impossible to read the query you're typing.
+    /// becomes unreadable. Longer queries then scroll horizontally.
     private func adjustInputFontSize() {
         let text = searchField.stringValue
         let baseSize = config.s(28)

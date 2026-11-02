@@ -2,10 +2,8 @@
 //
 // NSTextField's default cell baselines text to the top of the field, which
 // looks fine when the font height roughly matches the field height. The
-// launcher's search input enforces a fixed scaled height (~36 × scale)
-// but the font auto-shrinks as the user types a long query — so a shrunk
-// 14pt font in a 108pt-tall field ends up hugging the top, with a big
-// empty band below. This subclass overrides every entry point AppKit uses
+// launcher's search input has a fixed 36-point height, but its font can
+// shrink for long queries. This subclass overrides the entry points AppKit uses
 // to position the drawn text and the field editor so the cursor, glyphs,
 // and selection rectangles all sit centered on the field's vertical axis.
 //
