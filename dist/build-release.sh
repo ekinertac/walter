@@ -21,8 +21,8 @@ SWIFT="${SWIFT:-swift}"
 # Build before replacing the previous bundle, and use SwiftPM's actual output
 # path rather than assuming a particular architecture or toolchain layout.
 echo "→ Building Walter for this Mac..."
-"$SWIFT" build --package-path "$SWIFT_DIR" -c release
-BIN_DIR="$("$SWIFT" build --package-path "$SWIFT_DIR" -c release --show-bin-path)"
+"$SWIFT" build --package-path "$SWIFT_DIR" -c release --disable-automatic-resolution
+BIN_DIR="$("$SWIFT" build --package-path "$SWIFT_DIR" -c release --disable-automatic-resolution --show-bin-path)"
 RESOURCE_BUNDLE="$BIN_DIR/Walter_Walter.bundle"
 [[ -f "$BIN_DIR/Walter" && -d "$RESOURCE_BUNDLE" ]] || {
     echo "ERROR: SwiftPM executable or resource bundle is missing." >&2
@@ -42,4 +42,4 @@ echo "→ Applying an ad-hoc signature (no certificate or account)..."
 codesign --force --sign - --timestamp=none "$APP_DIR"
 codesign --verify --deep --strict "$APP_DIR"
 echo "Built: $APP_DIR"
-echo "Quit Walter before replacing an installed copy. Drag this app into ~/Applications to install."
+echo "Quit Walter before replacing an installed copy. Install manually under /Applications."

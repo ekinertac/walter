@@ -9,6 +9,6 @@ enum WalterResources {
            let embedded = Bundle(url: url) {
             return embedded
         }
-        return Bundle.module // swift run / tests, outside an application bundle
+        return Bundle.module // unbundled development builds/tests only
     }()
 }
