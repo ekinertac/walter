@@ -2,7 +2,7 @@
 A lightweight, native macOS launcher for apps, System Settings, calculations,
 unit conversions, and web searches. No accounts or telemetry.
 
-> **Vibe-slop warning:** I've literally never built an iOS or macOS app, nor have I written a line of Swift code. I forked this from [ekinertac/walter](https://github.com/ekinertac/walter), which itself appears to be vibe-coded, then I used GPT 6.1 to improve performance and rip all outbound network requests and any functionality I didn't use. I also change the distribution model to be entirely "compile it yourself" based, as I am building this just to fill my own needs.
+> **Vibe-slop warning:** I've literally never built an iOS or macOS app, nor have I written a line of Swift code. I forked this from [ekinertac/walter](https://github.com/ekinertac/walter), which itself appears to be vibecoded, then I used GPT 6.1 to improve performance and rip all outbound network requests and any functionality I didn't use. I also change the distribution model to be entirely "compile it yourself" based, as I am building this just to fill my own needs.
 
 ## Build and install
 Requires macOS 13 or later and a Swift toolchain. Run the following command to compile/build and install to your `/Applications` directory.
