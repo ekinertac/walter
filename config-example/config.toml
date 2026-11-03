@@ -19,9 +19,10 @@ mode = "list" # list | grid; fixed scale, top edge 30% down the pointer screen
 open = "Cmd+Space"
 close = "Escape"
 
-# Global app shortcuts; only real apps inside /Applications or /System/Applications are allowed.
+# Global app shortcuts: /Applications, /System/Applications, plus the exact Finder path below.
 [app_hotkeys]
 # "Cmd+Ctrl+t" = "/Applications/kitty.app"
+"Cmd+Ctrl+f" = "/System/Library/CoreServices/Finder.app"
 
 [search]
 web_search = "google"
