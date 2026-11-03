@@ -3,7 +3,7 @@ import AppKit
 
 final class AppDelegate: NSObject, NSApplicationDelegate {
     private let configLocationPresenter = ConfigLocationPresenter()
-    private var hotkeys: HotkeyManager?
+    private var hotkeys: ApplicationHotkeys?
     private var panel: LauncherPanelController!
     private var config: ConfigManager!
     private var appIndex: AppIndex!
@@ -21,7 +21,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         panel = LauncherPanelController(config: config, appIndex: appIndex, symbolIndex: symbolIndex,
             showConfigLocation: { [weak self] in self?.showConfigLocation() })
         do {
-            hotkeys = HotkeyManager(backend: try CarbonHotkeyBackend())
+            hotkeys = ApplicationHotkeys(manager: HotkeyManager(backend: try CarbonHotkeyBackend()),
+                toggle: { [weak self] in self?.panel.toggle() },
+                report: { [weak self] in self?.showHotkeyError($0) })
             configureHotkeys()
         } catch { showHotkeyError(error) }
         setupEditMenu()
@@ -41,27 +43,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     private func configureHotkeys() {
-        guard let hotkeys else { return }
-        do {
-            let binding = try HotkeyBinding.parse(config.keybindings.open)
-            _ = try HotkeyBinding.parse(config.keybindings.close)
-            try hotkeys.replace(with: [.init(name: "launcher", binding: binding, action: { [weak self] in self?.panel.toggle() })])
-        } catch {
-            showHotkeyError(error)
-            // On startup install the default if possible. On reload this is
-            // attempted only when no launcher has ever been registered.
-            if !hasWorkingHotkey {
-                do {
-                    try hotkeys.replace(with: [.init(name: "launcher", binding: try HotkeyBinding.parse(ConfigManager.Keybindings().open),
-                        action: { [weak self] in self?.panel.toggle() })])
-                    hasWorkingHotkey = true
-                } catch { showHotkeyError(error) }
-            }
-            return
-        }
-        hasWorkingHotkey = true
+        hotkeys?.apply(config)
     }
-    private var hasWorkingHotkey = false
+
+    func applicationWillTerminate(_ notification: Notification) {
+        config?.stopWatching()
+        hotkeys = nil
+    }
 
     private func showHotkeyError(_ error: Error) {
         let alert = NSAlert()

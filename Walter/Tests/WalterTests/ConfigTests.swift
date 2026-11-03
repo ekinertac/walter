@@ -24,6 +24,48 @@ struct ConfigTests {
         }
     }
 
+    @Test func quotedAppHotkeysPreserveDuplicatesAndReload() throws {
+        let fixture = try TemporaryDirectory()
+        let url = fixture.file("config.toml")
+        try """
+        [app_hotkeys]
+        "Cmd+Ctrl+t" = "/Applications/kitty.app" # comment
+        "Cmd+Ctrl+t" = "/Applications/Other.app"
+        “Ctrl+Shift+k” = “/Applications/With # and =.app”
+        """.write(to: url, atomically: true, encoding: .utf8)
+        let config = ConfigManager(configURL: url, watchForChanges: false)
+        #expect(config.appHotkeyErrors.isEmpty)
+        #expect(config.appHotkeys.map(\.binding) == ["Cmd+Ctrl+t", "Cmd+Ctrl+t", "Ctrl+Shift+k"])
+        #expect(config.appHotkeys.last?.path == "/Applications/With # and =.app")
+        config.selectTheme("dracula")
+        config.reload()
+        #expect(config.appHotkeys.count == 3)
+        try "[app_hotkeys]\n".write(to: url, atomically: true, encoding: .utf8)
+        config.reload()
+        #expect(config.appHotkeys.isEmpty)
+        #expect(config.appHotkeyErrors.isEmpty)
+    }
+
+    @Test(arguments: [
+        "Cmd+T = \"/Applications/Test.app\"",
+        "\"Cmd+T\" = /Applications/Test.app",
+        "\"Cmd+T\" = \"/Applications/Test.app",
+        "\"Cmd+T\" = \"/Applications/Test.app\" trailing",
+        "\"Cmd+T\"",
+        "\"Cmd+T\" = \"/Applications/Back\\\\slash.app\""
+    ])
+    func malformedAppHotkeysReported(line: String) throws {
+        let fixture = try TemporaryDirectory()
+        let url = fixture.file("config.toml")
+        try "[app_hotkeys]\n\(line)\n".write(to: url, atomically: true, encoding: .utf8)
+        let config = ConfigManager(configURL: url, watchForChanges: false)
+        #expect(config.appHotkeys.isEmpty)
+        #expect(config.appHotkeyErrors.count == 1)
+        try "[app_hotkeys]\n".write(to: url, atomically: true, encoding: .utf8)
+        config.reload()
+        #expect(config.appHotkeyErrors.isEmpty)
+    }
+
     @Test func removedSettingsIgnoredAndReloadIsLocal() throws {
         let fixture = try TemporaryDirectory()
         let url = fixture.file("config.toml")

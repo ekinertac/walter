@@ -2,13 +2,14 @@ import Foundation
 import Testing
 @testable import Walter
 
-private final class MockHotkeys: HotkeyBackend {
+final class MockHotkeys: HotkeyBackend {
     var onPress: ((UInt32) -> Void)?
     var active: [UInt32: HotkeyBinding] = [:]
     var fail: HotkeyBinding?
+    var failAll = false
     var unregistered: [UInt32] = []
     func register(_ binding: HotkeyBinding, id: UInt32) throws {
-        if fail == binding { throw HotkeyError.registration(-9878) }
+        if failAll || fail == binding { throw HotkeyError.registration(-9878) }
         active[id] = binding
     }
     func unregister(id: UInt32) { active[id] = nil; unregistered.append(id) }

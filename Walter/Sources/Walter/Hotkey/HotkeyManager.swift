@@ -56,11 +56,12 @@ struct HotkeyBinding: Hashable {
 }
 
 enum HotkeyError: Error, CustomStringConvertible {
-    case invalid(String), duplicate, registration(Int32)
+    case invalid(String), duplicate, registration(Int32), request(String, String)
     var description: String {
         switch self {
         case .invalid(let text): return "Invalid hotkey: \(text). Use a known key and modifiers, e.g. Cmd+Space."
         case .duplicate: return "Hotkeys have duplicate names or normalized bindings (including the launcher)."
+        case .request(let name, let detail): return "\(name): \(detail)"
         case .registration(let status): return "macOS could not register the hotkey (OSStatus \(status)). It may be in use by another app or a system shortcut."
         }
     }
@@ -110,7 +111,8 @@ final class HotkeyManager {
                 else {
                     guard nextID < UInt32.max else { throw HotkeyError.registration(-1) }
                     id = nextID; nextID += 1
-                    try backend.register(request.binding, id: id)
+                    do { try backend.register(request.binding, id: id) }
+                    catch { throw HotkeyError.request(request.name, String(describing: error)) }
                     newIDs.append(id)
                 }
                 staged[request.binding] = id

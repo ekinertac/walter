@@ -33,6 +33,14 @@ final class ConfigManager {
         var excludedApps: [String] = []
     }
 
+    struct AppHotkey: Equatable {
+        let binding: String
+        let path: String
+    }
+    // Keep entries, rather than a dictionary, so duplicate keys cannot disappear.
+    private(set) var appHotkeys: [AppHotkey] = []
+    private(set) var appHotkeyErrors: [String] = []
+
     var theme = Theme()
     var layout = Layout()
     var keybindings = Keybindings()
@@ -67,6 +75,7 @@ final class ConfigManager {
     func reload() {
         theme = Theme(); layout = Layout(); keybindings = Keybindings(); search = Search()
         aliases = [:]; aliasNames = [:]; userThemes = [:]
+        appHotkeys = []; appHotkeyErrors = []
         load()
         onChange?()
     }
@@ -127,6 +136,10 @@ final class ConfigManager {
     open = "Cmd+Space"
     close = "Escape"
 
+    # Global app shortcuts. Only real apps inside /Applications are allowed.
+    [app_hotkeys]
+    # "Cmd+Ctrl+t" = "/Applications/kitty.app"
+
     [search]
     web_search = "google" # google | duckduckgo | bing | https://...{query}...
     show_path = true
@@ -167,6 +180,11 @@ final class ConfigManager {
             if trimmed.hasPrefix("["), trimmed.hasSuffix("]") {
                 section = String(trimmed.dropFirst().dropLast())
                 aliasKey = section.hasPrefix("aliases.") ? String(section.dropFirst(8)).lowercased() : nil
+                continue
+            }
+            if section == "app_hotkeys" {
+                if let entry = Self.parseAppHotkey(trimmed) { appHotkeys.append(entry) }
+                else { appHotkeyErrors.append("Invalid [app_hotkeys] entry: \(trimmed). Use \"Cmd+Ctrl+t\" = \"/Applications/kitty.app\".") }
                 continue
             }
             let parts = trimmed.split(separator: "=", maxSplits: 1)
@@ -220,6 +238,34 @@ final class ConfigManager {
         }
     }
 
+    /// Deliberately small quoted-string subset: no escaping, with an optional
+    /// trailing comment. Consume the whole assignment so malformed entries are
+    /// reported rather than silently registering a truncated shortcut/path.
+    private static func parseAppHotkey(_ line: String) -> AppHotkey? {
+        var rest = line[...]
+        func skipWhitespace() { rest = rest.drop(while: { $0.isWhitespace }) }
+        func quoted() -> String? {
+            skipWhitespace()
+            let quotes: Set<Character> = ["\"", "\u{201C}", "\u{201D}"]
+            guard let quote = rest.first, quotes.contains(quote) else { return nil }
+            rest = rest.dropFirst()
+            let endQuote: Character = quote == "\u{201C}" ? "\u{201D}" : quote
+            guard let end = rest.firstIndex(of: endQuote) else { return nil }
+            let value = String(rest[..<end])
+            guard !value.contains("\\") else { return nil }
+            rest = rest[rest.index(after: end)...]
+            return value
+        }
+        guard let binding = quoted() else { return nil }
+        skipWhitespace()
+        guard rest.first == "=" else { return nil }
+        rest = rest.dropFirst()
+        guard let path = quoted() else { return nil }
+        skipWhitespace()
+        guard rest.isEmpty || rest.first == "#" else { return nil }
+        return AppHotkey(binding: binding, path: path)
+    }
+
     /// Only known local theme names can be written; preserve unrelated config.
     func selectTheme(_ name: String) {
         guard allThemes[name] != nil,
@@ -250,8 +296,9 @@ final class ConfigManager {
 
     private func startWatching() {
         watching = true
-        // Watch the parent directory so atomic config replacement stays covered.
-        for url in [configURL.deletingLastPathComponent(), userThemesDir] {
+        // A directory watcher sees replacements, but not writes to an existing
+        // file's contents. Watch both so in-place and atomic editor saves reload.
+        for url in [configURL, configURL.deletingLastPathComponent(), userThemesDir] {
             let fd = open(url.path, O_EVTONLY)
             guard fd >= 0 else { continue }
             let source = DispatchSource.makeFileSystemObjectSource(fileDescriptor: fd, eventMask: [.write, .rename, .delete], queue: .main)
@@ -261,7 +308,8 @@ final class ConfigManager {
                 self.pendingReload?.cancel()
                 let work = DispatchWorkItem { [weak self] in
                     guard let self, self.watching else { return }
-                    // Reattach if the theme directory itself was replaced.
+                    // Reattach to the current config inode after atomic saves,
+                    // and to the theme directory if it was replaced.
                     self.stopWatching()
                     self.startWatching()
                     self.reload()
