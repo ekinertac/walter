@@ -76,11 +76,14 @@ remote assets, rate APIs, update checks, external package dependencies,
 certificates, notarization, or release infrastructure. Ad-hoc local signing is
 part of app packaging.
 
-Allowed results/actions are apps under `/Applications`, System Settings panes,
-calculator answers, offline unit conversions, themes, and explicitly activated
+Allowed results/actions are apps under `/Applications` or `/System/Applications`,
+System Settings panes, calculator answers, offline unit conversions, themes, and explicitly activated
 web-search/URL-alias handoffs. Constructing a URL locally and asking the default
 browser to open it is allowed; Walter itself must not fetch internet resources.
-External apps may independently use the network.
+External apps may independently use the network. App hotkeys additionally allow
+exactly `/System/Library/CoreServices/Finder.app`, validated without symlink or
+metadata redirection. This hotkey-only exception does not add Finder/CoreServices
+to search discovery, aliases, or filesystem watching.
 
 Do not add file search, arbitrary file launching, shell aliases, system-command
 execution, query history, usage tracking/frecency, remote favicons, or
@@ -155,7 +158,10 @@ Paths are relative to `Walter/Sources/Walter/`:
 - `Hotkey/`: binding parsing, global shortcut registration and dispatch.
 - `UI/`: popup lifecycle, keyboard handling, list/grid rendering, theme preview.
 - `Launcher/`: query routing, fuzzy matching, allowed-app indexing/launching,
-  calculator, offline unit conversion, and System Settings links.
+  calculator, offline unit conversion, and System Settings links. App discovery,
+  aliases, and app hotkeys share the two fixed allowed roots, `/Applications`
+  and `/System/Applications`; symlinks must stay within their originating root.
+  App hotkeys alone also accept the exact Finder path described above.
 - `Config/`: config models/parser, generated defaults, hot reload, themes.
 
 Keep per-keystroke search responsive; avoid blocking I/O. Computed answers lead,
