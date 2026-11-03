@@ -30,6 +30,6 @@ You should disable your Spotlight shortcut first, if you intend to keep `Cmd+Spa
 
 ## Configuration
 - Edit `~/.config/walter/config.toml` to change the shortcut, theme, layout, or search engine. The file is created on first launch, and saved changes apply automatically.
-- Add global app shortcuts with `[app_hotkeys]`, e.g. `"Cmd+Ctrl+t" = "/Applications/kitty.app"`. They launch/activate apps directly without opening the popup. See [configuration details](docs/config.md#app_hotkeys).
+- Add global app or URL shortcuts with `[app_hotkeys]`, e.g. `"Cmd+Ctrl+t" = "/Applications/kitty.app"` or `"Cmd+Ctrl+g" = "https://google.com"`. They launch/activate apps or hand URLs to the default browser without opening the popup. See [configuration details](docs/config.md#app_hotkeys).
 - Custom themes go in the sibling `themes/` directory.
 - To start Walter at login, add it in **System Settings → General → Login Items**.

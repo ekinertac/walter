@@ -15,7 +15,7 @@ final class ApplicationHotkeys {
     private let manager: HotkeyManager
     private let apps: AllowedApps
     private let finder: FinderHotkeyTarget
-    private let openApp: (URL) -> Void
+    private let openURL: (URL) -> Void
     private let toggle: () -> Void
     private let report: (Error) -> Void
     private var applied: Snapshot?
@@ -23,12 +23,12 @@ final class ApplicationHotkeys {
 
     init(manager: HotkeyManager, apps: AllowedApps = AllowedApps(),
          finder: FinderHotkeyTarget = FinderHotkeyTarget(),
-         openApp: @escaping (URL) -> Void = { NSWorkspace.shared.open($0) },
+         openURL: @escaping (URL) -> Void = { NSWorkspace.shared.open($0) },
          toggle: @escaping () -> Void, report: @escaping (Error) -> Void) {
         self.manager = manager
         self.apps = apps
         self.finder = finder
-        self.openApp = openApp
+        self.openURL = openURL
         self.toggle = toggle
         self.report = report
     }
@@ -54,16 +54,16 @@ final class ApplicationHotkeys {
                 guard bindings.insert(binding).inserted else {
                     throw ConfigurationError(description: "[app_hotkeys] \(entry.binding): \(HotkeyError.duplicate)")
                 }
-                guard validatedTarget(for: entry.path) != nil else { throw invalidApp(entry) }
+                guard validatedTarget(for: entry.path) != nil else { throw invalidTarget(entry) }
                 requests.append(.init(name: "[app_hotkeys] \(entry.binding) → \(entry.path)", binding: binding, action: { [weak self] in
                     guard let self else { return }
-                    // Keep the configured path: re-resolve links at every press,
-                    // rather than trusting the destination found during reload.
+                    // Revalidate locally at every press. App paths must still
+                    // resolve safely; browser URLs never trigger network validation.
                     guard let url = self.validatedTarget(for: entry.path) else {
-                        self.report(self.invalidApp(entry))
+                        self.report(self.invalidTarget(entry))
                         return
                     }
-                    self.openApp(url)
+                    self.openURL(url)
                 }))
             }
             try manager.replace(with: requests)
@@ -103,11 +103,13 @@ final class ApplicationHotkeys {
         return errors
     }
 
-    private func validatedTarget(for path: String) -> URL? {
-        apps.validatedURL(for: path) ?? finder.validatedURL(for: path)
+    private func validatedTarget(for target: String) -> URL? {
+        guard !target.contains("{query}") else { return nil }
+        if let url = BrowserURL.parse(target) { return url }
+        return apps.validatedURL(for: target) ?? finder.validatedURL(for: target)
     }
 
-    private func invalidApp(_ entry: ConfigManager.AppHotkey) -> ConfigurationError {
-        ConfigurationError(description: "[app_hotkeys] \(entry.binding): Missing or disallowed app at \(entry.path). Use a real .app inside /Applications or /System/Applications, without escaping symlinks or embedded packages. The sole hotkey-only exception is \(FinderHotkeyTarget.path), which must not be redirected.")
+    private func invalidTarget(_ entry: ConfigManager.AppHotkey) -> ConfigurationError {
+        ConfigurationError(description: "[app_hotkeys] \(entry.binding): Missing or disallowed target at \(entry.path). Use a fixed HTTP(S) URL (no {query} template), or a real .app inside /Applications or /System/Applications, without escaping symlinks or embedded packages. The sole hotkey-only app exception is \(FinderHotkeyTarget.path), which must not be redirected.")
     }
 }

@@ -94,7 +94,7 @@ struct AllowedAppsTests {
         #expect(opened.map(\.path) == [userApp.path, systemApp.path])
         let backend = MockHotkeys()
         let hotkeys = ApplicationHotkeys(manager: HotkeyManager(backend: backend), apps: policy,
-            openApp: { opened.append($0) }, toggle: {}, report: { Issue.record("Unexpected error: \($0)") })
+            openURL: { opened.append($0) }, toggle: {}, report: { Issue.record("Unexpected error: \($0)") })
         hotkeys.apply(config)
         #expect(backend.active.count == 3)
         for shortcut in ["Cmd+t", "Cmd+k"] {

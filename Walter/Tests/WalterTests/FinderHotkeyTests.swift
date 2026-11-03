@@ -84,7 +84,7 @@ struct FinderHotkeyTests {
         var opened: [URL] = []
         var errors: [String] = []
         let hotkeys = ApplicationHotkeys(manager: HotkeyManager(backend: backend), apps: AllowedApps(roots: []),
-            finder: FinderHotkeyTarget(url: url), openApp: { opened.append($0) }, toggle: {},
+            finder: FinderHotkeyTarget(url: url), openURL: { opened.append($0) }, toggle: {},
             report: { errors.append(String(describing: $0)) })
         hotkeys.apply(config)
         let binding = try HotkeyBinding.parse("Cmd+Ctrl+f")

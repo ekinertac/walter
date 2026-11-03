@@ -20,7 +20,7 @@ private final class AppHotkeyFixture {
         config = ConfigManager(configURL: directory.file("config.toml"), watchForChanges: false,
                                apps: AllowedApps(root: root))
         controller = ApplicationHotkeys(manager: HotkeyManager(backend: backend), apps: AllowedApps(root: root),
-            openApp: { [weak self] in self?.opened.append($0) },
+            openURL: { [weak self] in self?.opened.append($0) },
             toggle: { [weak self] in self?.toggles += 1 },
             report: { [weak self] in self?.errors.append(String(describing: $0)) })
     }
@@ -189,8 +189,21 @@ struct ApplicationHotkeysTests {
         try await waitFor("Cmd+l")
         try f.press("Cmd+l")
         #expect(f.opened == [second, first, second])
+        try save("Cmd+g", path: "https://example.invalid", atomically: true)
+        try await waitFor("Cmd+g")
+        #expect(f.opened == [second, first, second]) // Reload is local only.
+        try f.press("Cmd+g")
+        #expect(f.opened.last?.absoluteString == "https://example.invalid")
+        try save("Cmd+k", path: "http://changed.invalid/path#fragment", atomically: false)
+        try await waitFor("Cmd+k")
+        #expect(f.opened.count == 4)
+        try f.press("Cmd+k")
+        #expect(f.opened.last?.absoluteString == "http://changed.invalid/path#fragment")
+        let removedURLID = try #require(f.backend.active.first { $0.value == (try? HotkeyBinding.parse("Cmd+k")) }?.key)
         try save(nil, path: first.path, atomically: true)
         try await waitFor(nil)
+        f.backend.onPress?(removedURLID)
+        #expect(f.opened.count == 5)
         #expect(f.errors.isEmpty)
         watched.stopWatching()
         let stoppedAt = reloads
@@ -255,6 +268,75 @@ struct ApplicationHotkeysTests {
         #expect(f.errors.count >= 2)
     }
 
+    @Test func urlsAndAppsShareHotkeysWithoutOpeningOnReload() throws {
+        let f = try AppHotkeyFixture()
+        let app = try f.app("Good.app")
+        let target = "https://example.invalid/?a=1&b=2#fragment"
+        try f.apply("\"Cmd+t\" = \"\(app.path)\"\n\"Cmd+g\" = \"\(target)\"")
+        #expect(f.errors.isEmpty)
+        #expect(f.backend.active.count == 3)
+        #expect(f.opened.isEmpty)
+        #expect(f.toggles == 0)
+        try f.press("Cmd+t")
+        try f.press("Cmd+g")
+        #expect(f.opened.map(\.absoluteString) == [app.absoluteString, target])
+        #expect(f.toggles == 0) // Neither action reveals/toggles the popup.
+        let original = f.backend.active
+        f.config.selectTheme("dracula")
+        f.config.reload()
+        f.controller.apply(f.config)
+        #expect(f.backend.active == original)
+        #expect(f.opened.count == 2)
+        // A reused binding can change from URL to app or app to URL.
+        try f.apply("\"Cmd+t\" = \"http://other.invalid\"\n\"Cmd+g\" = \"\(app.path)\"")
+        #expect(f.backend.active == original)
+        #expect(f.opened.count == 2)
+        try f.press("Cmd+t")
+        try f.press("Cmd+g")
+        #expect(f.opened.map(\.absoluteString) == [app.absoluteString, target, "http://other.invalid", app.absoluteString])
+        let removed = try #require(original.first { $0.value == (try? HotkeyBinding.parse("Cmd+t")) }?.key)
+        try f.apply()
+        f.backend.onPress?(removed)
+        #expect(f.opened.count == 4)
+        #expect(f.backend.active.count == 1)
+        #expect(f.errors.isEmpty)
+    }
+
+    @Test(arguments: ["file:///private/tmp/file", "javascript:alert(1)", "mailto:me@example.invalid",
+                      "ftp://example.invalid", "https://", "https://example.invalid/{query}",
+                      "!https://example.invalid"])
+    func invalidURLsPreserveWorkingActions(target: String) throws {
+        let f = try AppHotkeyFixture()
+        try f.apply("\"Cmd+g\" = \"https://original.invalid\"")
+        let original = f.backend.active
+        try f.apply("\"Cmd+g\" = \"\(target)\"")
+        #expect(f.backend.active == original)
+        #expect(f.errors.count == 1)
+        #expect(f.errors[0].contains(target))
+        #expect(f.opened.isEmpty)
+        try f.press("Cmd+g")
+        #expect(f.opened.map(\.absoluteString) == ["https://original.invalid"])
+    }
+
+    @Test func urlRegistrationFailurePreservesOldDestination() throws {
+        let f = try AppHotkeyFixture()
+        try f.apply("\"Cmd+g\" = \"https://original.invalid\"")
+        let original = f.backend.active
+        f.backend.fail = try HotkeyBinding.parse("Cmd+k")
+        let entries = "\"Cmd+g\" = \"https://replacement.invalid\"\n\"Cmd+k\" = \"https://new.invalid\""
+        try f.apply(entries)
+        #expect(f.backend.active == original)
+        #expect(f.errors.count == 1)
+        #expect(f.opened.isEmpty)
+        try f.press("Cmd+g")
+        #expect(f.opened.map(\.absoluteString) == ["https://original.invalid"])
+        f.backend.fail = nil
+        try f.apply(entries)
+        try f.press("Cmd+g")
+        try f.press("Cmd+k")
+        #expect(f.opened.map(\.absoluteString) == ["https://original.invalid", "https://replacement.invalid", "https://new.invalid"])
+    }
+
     @Test func missingDisallowedAndEscapingPathsAreRejected() throws {
         let f = try AppHotkeyFixture()
         let outside = try f.app("Outside.app", under: f.directory.url)
@@ -265,7 +347,7 @@ struct ApplicationHotkeysTests {
         let link = f.root.appendingPathComponent("Escape.app")
         try FileManager.default.createSymbolicLink(at: link, withDestinationURL: outside)
         for path in [outside.path, helper.path, file.path, link.path,
-                     f.root.appendingPathComponent("Missing.app").path, "https://example.invalid", "!echo ignored"] {
+                     f.root.appendingPathComponent("Missing.app").path, "!echo ignored"] {
             try f.apply("\"Cmd+t\" = \"\(path)\"")
             #expect(f.backend.active.count == 1)
             #expect(f.errors.last?.contains(path) == true)

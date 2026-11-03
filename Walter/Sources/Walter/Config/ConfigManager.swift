@@ -137,10 +137,11 @@ final class ConfigManager {
     open = "Cmd+Space"
     close = "Escape"
 
-    # Global app shortcuts: /Applications, /System/Applications, or the exact Finder path.
+    # Global shortcuts: allowed apps (including the exact Finder path) or fixed HTTP(S) URLs.
     [app_hotkeys]
     # "Cmd+Ctrl+t" = "/Applications/kitty.app"
     # "Cmd+Ctrl+f" = "/System/Library/CoreServices/Finder.app"
+    # "Cmd+Ctrl+g" = "https://google.com"
 
     [search]
     web_search = "google" # google | duckduckgo | bing | https://...{query}...

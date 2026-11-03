@@ -77,9 +77,10 @@ certificates, notarization, or release infrastructure. Ad-hoc local signing is
 part of app packaging.
 
 Allowed results/actions are apps under `/Applications` or `/System/Applications`,
-System Settings panes, calculator answers, offline unit conversions, themes, and explicitly activated
-web-search/URL-alias handoffs. Constructing a URL locally and asking the default
-browser to open it is allowed; Walter itself must not fetch internet resources.
+System Settings panes, calculator answers, offline unit conversions, themes, and
+explicitly activated web-search, bookmark, URL-alias, and HTTP(S) hotkey handoffs.
+Constructing a URL locally and asking the default browser to open it is allowed;
+Walter itself must not fetch internet resources.
 External apps may independently use the network. App hotkeys additionally allow
 exactly `/System/Library/CoreServices/Finder.app`, validated without symlink or
 metadata redirection. This hotkey-only exception does not add Finder/CoreServices
@@ -108,7 +109,8 @@ and Cmd+, explains the config location without opening an editor.
   background retries. Offline means no attempts, not merely graceful failure
   without a connection. Do not add opt-in network features.
 - The sole external-URL exception is a user-activated browser handoff for web
-  search or a URL alias. No prefetching, URL validation over the network,
+  search, a bookmark, a URL alias, or a fixed HTTP(S) `[app_hotkeys]` target.
+  No prefetching, URL validation over the network,
   previews, favicon loading, or search suggestions. Typing, startup, config
   reload, and theme selection must remain local.
 - Bundle required assets and data locally. Builds and tests must work without
@@ -161,7 +163,9 @@ Paths are relative to `Walter/Sources/Walter/`:
   calculator, offline unit conversion, and System Settings links. App discovery,
   aliases, and app hotkeys share the two fixed allowed roots, `/Applications`
   and `/System/Applications`; symlinks must stay within their originating root.
-  App hotkeys alone also accept the exact Finder path described above.
+  App hotkeys alone also accept the exact Finder path described above. The
+  `[app_hotkeys]` section additionally accepts fixed HTTP(S) URL targets (no
+  `{query}` templates), handed to the default browser only on a hotkey press.
 - `Config/`: config models/parser, generated defaults, hot reload, themes.
 
 Keep per-keystroke search responsive; avoid blocking I/O. Computed answers lead,

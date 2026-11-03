@@ -123,26 +123,35 @@ Walter is active. Hidden startup and hotkey-registration error alerts remain.
 
 ## `[app_hotkeys]`
 
-Optional global shortcuts to launch/activate allowed apps directly, whether
-Walter is active or hidden. No shell, popup, extra dependencies, or permissions
-are involved. There are no app shortcuts by default.
+Optional global shortcuts to launch/activate allowed apps or hand fixed HTTP(S)
+URLs to the default browser directly, whether Walter is active or hidden. No shell,
+popup, extra dependencies, or permissions are involved. There are no shortcuts
+by default.
 
 ```toml
 [app_hotkeys]
 "Cmd+Ctrl+t" = "/Applications/kitty.app"
 "Cmd+Ctrl+f" = "/System/Library/CoreServices/Finder.app"
+"Cmd+Ctrl+g" = "https://google.com"
 ```
 
-Both binding keys and app paths must be double-quoted (straight or matching smart
+Both binding keys and targets must be double-quoted (straight or matching smart
 quotes; escaping is not supported). Trailing `#` comments are allowed. Bindings
 use the same syntax as `keybindings.open` and require a modifier. Duplicate keys,
 normalized duplicates such as `Ctrl+Cmd+t`/`Command+Control+t`, and collisions with
 the launcher are errors. Popup-local commands are not global registrations.
 
-Targets use the same validation and launch path as search results: a real `.app`
+URL targets must be fixed HTTP(S) URLs with a host; `{query}` templates, `file:`,
+`javascript:`, and other schemes are rejected. Validation is entirely local. Only
+pressing the hotkey asks the browser to open the URL; startup, config reload, and
+theme changes never open it or fetch anything. URLs are written directly as targets;
+a matching `[bookmarks]` entry is not required, and bookmark keywords are not
+resolved here.
+
+App targets use the same validation and launch path as search results: a real `.app`
 inside `/Applications` or `/System/Applications` (including ordinary subfolders),
 never an arbitrary file, embedded
-helper/package, outside-root app, URL, or escaping symlink. Paths are checked on
+helper/package, outside-root app, or escaping symlink. Paths are checked on
 configuration changes and revalidated at each activation. Missing/disallowed apps
 and registration conflicts produce an alert naming the offending entry.
 
@@ -157,9 +166,9 @@ or permit other apps under that directory. The repository example config enables
 config files are not rewritten.
 
 Saving adds, changes, or removes shortcuts automatically. A bad entry rejects the
-whole hotkey update and preserves the previously working set; fix the entry and
-save again to retry. On first load, Walter still attempts the launcher alone as
-described above. Removing the section removes all app shortcuts on a successful
+whole hotkey update (apps and URLs together) and preserves the previously working
+set; fix the entry and save again to retry. On first load, Walter still attempts the launcher alone as
+described above. Removing the section removes all app/URL shortcuts on a successful
 reload. Unchanged shortcuts retain their registrations, including on theme saves;
 popup rebuilds/theme previews do not own them. Quitting releases all registrations.
 
