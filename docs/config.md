@@ -9,7 +9,7 @@ a hidden popup. Theme selection writes only the config file. There is no
 ## Parser subset
 
 Sections, `key = value`, quoted strings (straight or smart double quotes),
-quoted shortcut keys in `[app_hotkeys]`, booleans, numbers, and comma-separated
+quoted keys in `[app_hotkeys]` and `[bookmarks]`, booleans, numbers, and comma-separated
 `excluded_apps` are supported. Whole-line
 comments begin with `#`; inline comments after quoted values are supported.
 This is not full TOML: no arbitrary arrays, escaping, or general nested tables.
@@ -192,6 +192,30 @@ leaving their root are excluded, even if they point into the other allowed root.
 Activation revalidates so a stale/changed index cannot open an arbitrary path.
 `~/Applications`, other `/System` paths, and arbitrary additional roots remain
 unsupported; no configurable app-root setting is introduced.
+
+## `[bookmarks]`
+
+Optional keyword → fixed HTTP(S) URL pairs. There are no bookmarks by default.
+
+```toml
+[bookmarks]
+"google" = "https://google.com"
+"docs" = "https://example.com/docs#start"
+```
+
+Both keys and values must be double-quoted (straight or matching smart quotes);
+trailing `#` comments are allowed. Keywords are trimmed and normalized to lowercase,
+then fuzzy-matched case-insensitively alongside apps and aliases. Duplicate
+normalized keywords use the last value. Bookmarks and aliases remain separate;
+using the same keyword in both can show both results.
+
+Results show the keyword with a shared, locally prepared bookmark symbol in list
+and grid layouts; list subtitles show the URL. Only activation hands the URL to
+the default browser. No favicons, previews, network validation, or per-keystroke
+image preparation occur. Empty keywords, non-HTTP(S) targets, app/file paths,
+commands, and `{query}` templates are ignored (use `[aliases]` for templates).
+Saving adds, changes, or removes bookmarks through the existing local hot reload,
+without revealing a hidden popup. Existing aliases are unchanged.
 
 ## `[aliases]`
 

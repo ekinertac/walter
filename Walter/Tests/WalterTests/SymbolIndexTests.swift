@@ -57,7 +57,7 @@ struct SymbolIndexTests {
     @Test func catalogCoversBuiltInsAndEverySettingsPane() {
         let requests = SymbolIndex.requests
         for (name, description) in [("arrow.left.arrow.right", "Convert"), ("equal.circle", "Calculator"),
-                                    ("paintpalette", "Theme"), ("link", "Alias"), ("app", "Alias"),
+                                    ("paintpalette", "Theme"), ("link", "Alias"), ("bookmark", "Bookmark"), ("app", "Alias"),
                                     ("magnifyingglass.circle", "Web search")] {
             #expect(requests.contains { $0.name == name && $0.description == description })
         }

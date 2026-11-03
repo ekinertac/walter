@@ -15,6 +15,7 @@ final class SymbolIndex {
             Request(name: "equal.circle", description: "Calculator"),
             Request(name: "paintpalette", description: "Theme"),
             Request(name: "link", description: "Alias"),
+            Request(name: "bookmark", description: "Bookmark"),
             Request(name: "app", description: "Alias"),
             Request(name: "magnifyingglass.circle", description: "Web search")
         ]

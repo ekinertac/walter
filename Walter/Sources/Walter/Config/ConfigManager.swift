@@ -45,6 +45,7 @@ final class ConfigManager {
     var layout = Layout()
     var keybindings = Keybindings()
     var search = Search()
+    private(set) var bookmarks: [String: String] = [:]
     var aliases: [String: String] = [:]
     var aliasNames: [String: String] = [:]
     var userThemes: [String: ThemePreset] = [:]
@@ -74,7 +75,7 @@ final class ConfigManager {
 
     func reload() {
         theme = Theme(); layout = Layout(); keybindings = Keybindings(); search = Search()
-        aliases = [:]; aliasNames = [:]; userThemes = [:]
+        bookmarks = [:]; aliases = [:]; aliasNames = [:]; userThemes = [:]
         appHotkeys = []; appHotkeyErrors = []
         load()
         onChange?()
@@ -146,6 +147,10 @@ final class ConfigManager {
     show_path = true
     # excluded_apps = Example, Another App
 
+    # Bookmark keywords are fuzzy-matched; only fixed HTTP(S) URLs are accepted.
+    [bookmarks]
+    # "google" = "https://google.com"
+
     # Only HTTP(S) URLs or real apps resolved inside /Applications or /System/Applications.
     # Commands (!), arbitrary paths, and parameterized app paths are rejected.
     [aliases]
@@ -184,8 +189,21 @@ final class ConfigManager {
                 continue
             }
             if section == "app_hotkeys" {
-                if let entry = Self.parseAppHotkey(trimmed) { appHotkeys.append(entry) }
-                else { appHotkeyErrors.append("Invalid [app_hotkeys] entry: \(trimmed). Use \"Cmd+Ctrl+t\" = \"/Applications/kitty.app\".") }
+                if let entry = Self.parseQuotedAssignment(trimmed) {
+                    appHotkeys.append(AppHotkey(binding: entry.key, path: entry.value))
+                } else { appHotkeyErrors.append("Invalid [app_hotkeys] entry: \(trimmed). Use \"Cmd+Ctrl+t\" = \"/Applications/kitty.app\".") }
+                continue
+            }
+            if section == "bookmarks" {
+                if let entry = Self.parseQuotedAssignment(trimmed) {
+                    let key = entry.key.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+                    guard !key.isEmpty else { continue }
+                    if !entry.value.contains("{query}"), BrowserURL.parse(entry.value) != nil {
+                        bookmarks[key] = entry.value
+                    } else {
+                        bookmarks.removeValue(forKey: key)
+                    }
+                }
                 continue
             }
             let parts = trimmed.split(separator: "=", maxSplits: 1)
@@ -240,9 +258,9 @@ final class ConfigManager {
     }
 
     /// Deliberately small quoted-string subset: no escaping, with an optional
-    /// trailing comment. Consume the whole assignment so malformed entries are
-    /// reported rather than silently registering a truncated shortcut/path.
-    private static func parseAppHotkey(_ line: String) -> AppHotkey? {
+    /// trailing comment. Shared by bookmarks and app hotkeys; consume the whole
+    /// assignment rather than accepting a truncated key or target.
+    private static func parseQuotedAssignment(_ line: String) -> (key: String, value: String)? {
         var rest = line[...]
         func skipWhitespace() { rest = rest.drop(while: { $0.isWhitespace }) }
         func quoted() -> String? {
@@ -257,14 +275,14 @@ final class ConfigManager {
             rest = rest[rest.index(after: end)...]
             return value
         }
-        guard let binding = quoted() else { return nil }
+        guard let key = quoted() else { return nil }
         skipWhitespace()
         guard rest.first == "=" else { return nil }
         rest = rest.dropFirst()
-        guard let path = quoted() else { return nil }
+        guard let value = quoted() else { return nil }
         skipWhitespace()
         guard rest.isEmpty || rest.first == "#" else { return nil }
-        return AppHotkey(binding: binding, path: path)
+        return (key: key, value: value)
     }
 
     /// Only known local theme names can be written; preserve unrelated config.

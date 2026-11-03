@@ -86,6 +86,14 @@ final class LauncherEngine {
                 }
             }
         }
+        for (keyword, url) in config.bookmarks {
+            let match = fuzzyMatch(query: q, target: keyword)
+            if match.matched {
+                scored.append((SearchResult(title: keyword, subtitle: url,
+                    icon: symbols.image(name: "bookmark", description: "Bookmark"),
+                    action: .url(url)), match.score))
+            }
+        }
         let themeMatch = fuzzyMatch(query: q, target: "Change Theme")
         if themeMatch.matched {
             scored.append((SearchResult(title: "Change Theme", subtitle: "Browse built-in and user themes",
