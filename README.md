@@ -21,7 +21,7 @@ Walter starts hidden. There is no dock icon nor tray icon. All config is hot-rel
 You should disable your Spotlight shortcut first, if you intend to keep `Cmd+Space` as the activation keybinding.
 
 ## Functionality
-- Suggests apps under `/Applications`
+- Suggests apps under `/Applications` and `/System/Applications`
 - Suggests entries from the System Settings pane
 - Supports calculator operations
 - Supports unit conversions (baked-in conversion factors, though; no outbound network requests to fetch anything)
@@ -30,5 +30,6 @@ You should disable your Spotlight shortcut first, if you intend to keep `Cmd+Spa
 
 ## Configuration
 - Edit `~/.config/walter/config.toml` to change the shortcut, theme, layout, or search engine. The file is created on first launch, and saved changes apply automatically.
+- Add global app shortcuts with `[app_hotkeys]`, e.g. `"Cmd+Ctrl+t" = "/Applications/kitty.app"`. They launch/activate apps directly without opening the popup. See [configuration details](docs/config.md#app_hotkeys).
 - Custom themes go in the sibling `themes/` directory.
 - To start Walter at login, add it in **System Settings → General → Login Items**.
