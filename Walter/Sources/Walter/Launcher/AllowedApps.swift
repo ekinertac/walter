@@ -1,12 +1,43 @@
-// One policy for discovery, aliases, and activation. Tests inject a local root.
+// One policy for discovery, aliases, and activation. Tests inject local roots.
 import AppKit
 
 struct AllowedApps {
-    let root: URL
+    static let defaultRootPaths = ["/Applications", "/System/Applications"]
+    let roots: [URL]
 
-    init(root: URL = URL(fileURLWithPath: "/Applications", isDirectory: true)) {
-        self.root = root.standardizedFileURL
+    init(roots: [URL] = AllowedApps.defaultRootPaths.map { URL(fileURLWithPath: $0, isDirectory: true) }) {
+        self.roots = roots.map { $0.standardizedFileURL }
     }
+
+    init(root: URL) { self.init(roots: [root]) }
+
+    func validatedURL(for path: String) -> URL? { metadata(for: path)?.url }
+
+    func metadata(for path: String) -> (url: URL, info: NSDictionary)? {
+        for root in roots {
+            if let metadata = AllowedAppRoot(root: root).metadata(for: path) { return metadata }
+        }
+        return nil
+    }
+
+    func discover() -> [URL] {
+        let paths = Set(roots.flatMap { AllowedAppRoot(root: $0).discover().map(\.path) })
+        return paths.sorted().map { URL(fileURLWithPath: $0) }
+    }
+
+    /// Revalidate immediately before OS handoff, not only when indexing.
+    @discardableResult
+    func launch(path: String, open: (URL) -> Void = { NSWorkspace.shared.open($0) }) -> Bool {
+        guard let url = validatedURL(for: path) else { return false }
+        open(url)
+        return true
+    }
+}
+
+/// A path must stay within its originating root, including metadata and every
+/// symlink hop. Adding a root never permits traversal through an outside tree.
+private struct AllowedAppRoot {
+    let root: URL
 
     private func isInside(_ url: URL) -> Bool {
         url.path.hasPrefix(root.path + "/")
@@ -77,14 +108,6 @@ struct AllowedApps {
         return false
     }
 
-    /// Revalidate immediately before OS handoff, not only when indexing.
-    @discardableResult
-    func launch(path: String, open: (URL) -> Void = { NSWorkspace.shared.open($0) }) -> Bool {
-        guard let url = validatedURL(for: path) else { return false }
-        open(url)
-        return true
-    }
-
     func discover() -> [URL] {
         var visited = Set<String>()
         var found = Set<String>()
@@ -96,7 +119,10 @@ struct AllowedApps {
                 at: resolved, includingPropertiesForKeys: nil,
                 options: [.skipsHiddenFiles]
             ) else { return }
-            for child in children {
+            for entry in children {
+                // Directory enumeration may return a different spelling of a
+                // local root (e.g. /private/tmp vs /tmp in isolated fixtures).
+                let child = entry.standardizedFileURL
                 if child.pathExtension.lowercased() == "app" {
                     if let allowed = validatedURL(for: child.path) { found.insert(allowed.path) }
                     continue

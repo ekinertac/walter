@@ -79,7 +79,7 @@ final class LauncherEngine {
         }
         InputTiming.shared.measure(.aliases) {
             for (key, value) in config.aliases where !value.contains("{query}") {
-                guard ConfigManager.isAllowedAliasValue(value, appRoot: apps.root.path) else { continue }
+                guard ConfigManager.isAllowedAliasValue(value, appRoots: apps.roots.map(\.path)) else { continue }
                 let match = fuzzyMatch(query: q, target: key)
                 if match.matched {
                     scored.append((aliasResult(name: config.aliasNames[key] ?? key, value: value), match.score))

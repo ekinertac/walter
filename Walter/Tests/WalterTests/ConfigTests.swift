@@ -110,7 +110,7 @@ struct ConfigTests {
         flat = "!echo ignored"
         spaced = "  !echo {query}"
         file = "/private/tmp/file.txt"
-        badApp = "/System/Applications/Test.app"
+        badApp = "/NotAnAllowedRoot/Test.app"
         fileURL = "file:///private/tmp/file.txt"
         scheme = "javascript:alert(1)"
         good = "https://example.invalid/{query}"

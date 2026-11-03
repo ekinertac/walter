@@ -82,13 +82,13 @@ final class ConfigManager {
 
     // Pure preliminary guard. App existence and resolved boundaries are checked
     // during config loading and again at activation, not on each keystroke.
-    static func isAllowedAliasValue(_ value: String, appRoot: String = "/Applications") -> Bool {
+    static func isAllowedAliasValue(_ value: String, appRoots: [String] = AllowedApps.defaultRootPaths) -> Bool {
         guard !value.trimmingCharacters(in: .whitespacesAndNewlines).hasPrefix("!") else { return false }
         if value.contains("{query}") {
             return BrowserURL.parse(value.replacingOccurrences(of: "{query}", with: "x")) != nil
         }
         return BrowserURL.parse(value) != nil ||
-            (value.hasPrefix(appRoot + "/") && value.lowercased().hasSuffix(".app") && !value.contains("/../"))
+            (appRoots.contains { value.hasPrefix($0 + "/") } && value.lowercased().hasSuffix(".app") && !value.contains("/../"))
     }
 
     private func storeAlias(_ key: String, _ value: String) {
@@ -136,7 +136,7 @@ final class ConfigManager {
     open = "Cmd+Space"
     close = "Escape"
 
-    # Global app shortcuts. Only real apps inside /Applications are allowed.
+    # Global app shortcuts. Only real apps inside /Applications or /System/Applications are allowed.
     [app_hotkeys]
     # "Cmd+Ctrl+t" = "/Applications/kitty.app"
 
@@ -145,7 +145,7 @@ final class ConfigManager {
     show_path = true
     # excluded_apps = Example, Another App
 
-    # Only HTTP(S) URLs or real apps resolved inside /Applications.
+    # Only HTTP(S) URLs or real apps resolved inside /Applications or /System/Applications.
     # Commands (!), arbitrary paths, and parameterized app paths are rejected.
     [aliases]
     # gh = "https://github.com"

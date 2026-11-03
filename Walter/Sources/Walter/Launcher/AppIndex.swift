@@ -31,7 +31,7 @@ final class AppIndex {
 
     convenience init(policy: AllowedApps = AllowedApps(), onChange: @escaping () -> Void = {}) {
         self.init(builder: CachedAppIndexBuilder(policy: policy),
-                  watcher: FSEventsAppIndexWatcher(root: policy.root), onChange: onChange)
+                  watcher: FSEventsAppIndexWatcher(roots: policy.roots), onChange: onChange)
     }
 
     /// Test dependencies avoid real app scanning, native icon calls, and watchers.

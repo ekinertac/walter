@@ -9,17 +9,17 @@ struct AppIndexEvent {
 
 protocol AppIndexWatching: AnyObject {
     /// Start before the initial scan. Events are delivered on main; tests inject
-    /// a fake and never register filesystem watchers or inspect /Applications.
+    /// a fake and never register filesystem watchers or inspect system app roots.
     func start(onChange: @escaping (AppIndexEvent) -> Void) -> Bool
     func stop()
 }
 
 final class FSEventsAppIndexWatcher: AppIndexWatching {
-    private let root: URL
+    let roots: [URL]
     private var stream: FSEventStreamRef?
     private var onChange: ((AppIndexEvent) -> Void)?
 
-    init(root: URL) { self.root = root }
+    init(roots: [URL]) { self.roots = roots }
     deinit { stop() }
 
     func start(onChange: @escaping (AppIndexEvent) -> Void) -> Bool {
@@ -36,7 +36,7 @@ final class FSEventsAppIndexWatcher: AppIndexWatching {
             let eventPaths = count > 256 ? [] : paths.compactMap { $0 as? String }
             let combined = UnsafeBufferPointer(start: flags, count: count).reduce(UInt32(0), |)
             watcher.onChange?(FSEventsAppIndexWatcher.event(paths: eventPaths, flags: combined))
-        }, &context, [root.path] as CFArray,
+        }, &context, roots.map(\.path) as CFArray,
             FSEventStreamEventId(kFSEventStreamEventIdSinceNow), 1,
             UInt32(kFSEventStreamCreateFlagUseCFTypes | kFSEventStreamCreateFlagFileEvents | kFSEventStreamCreateFlagWatchRoot)) else {
             self.onChange = nil

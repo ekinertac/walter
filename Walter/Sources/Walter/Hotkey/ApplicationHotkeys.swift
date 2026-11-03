@@ -99,6 +99,6 @@ final class ApplicationHotkeys {
     }
 
     private func invalidApp(_ entry: ConfigManager.AppHotkey) -> ConfigurationError {
-        ConfigurationError(description: "[app_hotkeys] \(entry.binding): Missing or disallowed app at \(entry.path). Use a real .app inside /Applications, without escaping symlinks or embedded packages.")
+        ConfigurationError(description: "[app_hotkeys] \(entry.binding): Missing or disallowed app at \(entry.path). Use a real .app inside /Applications or /System/Applications, without escaping symlinks or embedded packages.")
     }
 }
