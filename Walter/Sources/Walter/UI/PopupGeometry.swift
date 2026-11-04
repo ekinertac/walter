@@ -18,7 +18,7 @@ enum PopupGeometry {
     /// Horizontally centered, with the top edge 30% down the visible screen.
     /// Keep that anchor as results grow; shift up only to avoid the bottom edge.
     static func upperCentered(size: CGSize, in visible: CGRect) -> CGRect {
-        let top = visible.maxY - visible.height * 0.3
+        let top = visible.maxY - visible.height * 0.1
         return CGRect(x: visible.midX - size.width / 2,
                       y: max(visible.minY, top - size.height),
                       width: size.width, height: size.height)
