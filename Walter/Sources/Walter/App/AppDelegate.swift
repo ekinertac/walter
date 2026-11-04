@@ -1,128 +1,90 @@
-// AppDelegate.swift — Wires together all subsystems on launch
-//
-// Owns the top-level objects that must live for the process lifetime:
-//   - StatusBarController (tray icon + menu)
-//   - HotkeyManager (global Alt+Space listener)
-//   - LauncherPanelController (the floating search window)
-//   - ConfigManager (TOML config loading + hot-reload)
-//
-// The panel is shown on first launch; after that, Alt+Space toggles it.
-
+// Application lifetime owns hotkeys and indexes independently of popup rebuilds.
 import AppKit
 
-class AppDelegate: NSObject, NSApplicationDelegate {
-
-    private var statusBar: StatusBarController!
-    private var hotkey: HotkeyManager!
+final class AppDelegate: NSObject, NSApplicationDelegate {
+    private let configLocationPresenter = ConfigLocationPresenter()
+    private var hotkeys: ApplicationHotkeys?
     private var panel: LauncherPanelController!
     private var config: ConfigManager!
+    private var appIndex: AppIndex!
+    private var symbolIndex: SymbolIndex!
 
     func applicationDidFinishLaunching(_ notification: Notification) {
-        // Set the app icon (used in About dialog, Cmd+Tab if ever shown, etc.)
-        if let iconURL = Bundle.module.url(forResource: "AppIcon", withExtension: "icns"),
-           let icon = NSImage(contentsOf: iconURL) {
-            NSApp.applicationIconImage = icon
+        if let url = WalterResources.bundle.url(forResource: "AppIcon", withExtension: "icns") {
+            NSApp.applicationIconImage = NSImage(contentsOf: url)
         }
-
-        // Load config (falls back to defaults if file is missing)
         config = ConfigManager()
-
-        // Create the launcher panel (hidden initially)
-        panel = LauncherPanelController(config: config)
-
-        // Menu bar icon with Quit action
-        statusBar = StatusBarController(config: config, onToggle: { [weak self] in
-            self?.panel.toggle()
-        }, onQuit: {
-            NSApp.terminate(nil)
-        })
-
-        // Check Accessibility permission — required for the global hotkey.
-        // When running as a .app bundle, Walter itself needs the permission
-        // (unlike swift run, which piggybacks on Terminal's permission).
-        requestAccessibilityIfNeeded()
-
-        // Global hotkey from config (e.g. "Alt+Space", "Alt+Tab", "Ctrl+Space")
-        let (keyCode, modifiers) = HotkeyManager.parseBinding(config.keybindings.open)
-        hotkey = HotkeyManager(keyCode: keyCode, modifiers: modifiers) { [weak self] in
-            self?.panel.toggle()
-        }
-
+        appIndex = AppIndex { [weak self] in self?.panel?.refreshResults() }
+        // Publish built-ins for subsequent lookups; completion must not reset a
+        // visible selection. Neither snapshot preparation belongs to a panel.
+        symbolIndex = SymbolIndex()
+        panel = LauncherPanelController(config: config, appIndex: appIndex, symbolIndex: symbolIndex,
+            showConfigLocation: { [weak self] in self?.showConfigLocation() })
+        do {
+            hotkeys = ApplicationHotkeys(manager: HotkeyManager(backend: try CarbonHotkeyBackend()),
+                toggle: { [weak self] in self?.panel.toggle() },
+                report: { [weak self] in self?.showHotkeyError($0) })
+            configureHotkeys()
+        } catch { showHotkeyError(error) }
         setupEditMenu()
-
-        // Hot-reload: when config.toml is saved, rebuild the panel with new values.
-        // Full teardown+rebuild is simpler and more reliable than patching every
-        // property individually — the panel is cheap to construct.
         config.onChange = { [weak self] in
             guard let self else { return }
-
-            // Always rebind hotkey — even during theme preview the user
-            // might have changed keybindings in another editor window.
-            let (kc, mods) = HotkeyManager.parseBinding(self.config.keybindings.open)
-            self.hotkey = HotkeyManager(keyCode: kc, modifiers: mods) { [weak self] in
-                self?.panel.toggle()
-            }
-
-            // Skip panel rebuild during theme preview (the panel updates
-            // colors directly via previewTheme).
-            if self.panel.suppressConfigRebuild { return }
-
-            let wasVisible = self.panel.isVisible
+            self.configureHotkeys()
+            // Global registrations survive theme preview and panel replacement.
+            guard !self.panel.suppressConfigRebuild else { return }
+            let visible = self.panel.isVisible
             self.panel.hide()
-            self.panel = LauncherPanelController(config: self.config)
-            if wasVisible {
-                self.panel.show()
-            }
-            print("UI rebuilt with new config")
+            self.panel = LauncherPanelController(config: self.config, appIndex: self.appIndex,
+                symbolIndex: self.symbolIndex,
+                showConfigLocation: { [weak self] in self?.showConfigLocation() })
+            if visible { self.panel.show() }
         }
-
-        // Show the panel on first launch
-        panel.show()
+        // Always hidden at startup, including manual and macOS login launches.
     }
 
-    /// Prompts for Accessibility permission if not already granted.
-    /// Uses AXIsProcessTrustedWithOptions which shows the native macOS dialog
-    /// ("Walter would like to control this computer") on first run.
-    private func requestAccessibilityIfNeeded() {
-        let trusted = AXIsProcessTrusted()
-        if !trusted {
-            let options = [kAXTrustedCheckOptionPrompt.takeUnretainedValue(): true] as CFDictionary
-            AXIsProcessTrustedWithOptions(options)
-            print("Accessibility: not granted — prompting user")
-        } else {
-            print("Accessibility: granted")
-        }
+    private func configureHotkeys() {
+        hotkeys?.apply(config)
     }
 
-    @objc private func openConfig() {
-        let configPath = config.configURL.path
-        let editorPath = SystemCommands.resolveEditorPath(configured: config.general.editor)
+    func applicationWillTerminate(_ notification: Notification) {
+        config?.stopWatching()
+        hotkeys = nil
+    }
 
-        NSWorkspace.shared.open(
-            [URL(fileURLWithPath: configPath)],
-            withApplicationAt: URL(fileURLWithPath: editorPath),
-            configuration: NSWorkspace.OpenConfiguration()
-        )
+    private func showHotkeyError(_ error: Error) {
+        let alert = NSAlert()
+        alert.messageText = "Walter hotkey registration failed"
+        alert.informativeText = "\(error)\n\nEdit \(config.configURL.path). A previously working launcher binding is kept when possible. Walter does not change system shortcuts."
+        alert.alertStyle = .warning
+        NSApp.activate(ignoringOtherApps: true)
+        alert.runModal()
+    }
+
+    private func showConfigLocation() {
+        guard panel.isVisible else { return }
+        configLocationPresenter.show(configURL: config.configURL, present: { notice in
+            let alert = NSAlert()
+            alert.messageText = notice.title
+            alert.informativeText = notice.message
+            alert.alertStyle = .informational
+            alert.addButton(withTitle: "OK")
+            alert.addButton(withTitle: "Cancel") // Native Escape dismissal; neither button changes settings.
+            alert.runModal()
+        }, restoreFocus: { [weak self] in
+            // A config reload may have replaced the panel while the alert ran.
+            self?.panel.restoreInputFocus()
+        })
     }
 
     private func setupEditMenu() {
-        let editMenu = NSMenu(title: "Edit")
-        editMenu.addItem(withTitle: "Select All", action: #selector(NSText.selectAll(_:)), keyEquivalent: "a")
-        editMenu.addItem(withTitle: "Copy", action: #selector(NSText.copy(_:)), keyEquivalent: "c")
-        editMenu.addItem(withTitle: "Paste", action: #selector(NSText.paste(_:)), keyEquivalent: "v")
-        editMenu.addItem(withTitle: "Cut", action: #selector(NSText.cut(_:)), keyEquivalent: "x")
-        editMenu.addItem(withTitle: "Undo", action: Selector(("undo:")), keyEquivalent: "z")
-        editMenu.addItem(.separator())
-
-        let prefsItem = NSMenuItem(title: "Open Config", action: #selector(openConfig), keyEquivalent: ",")
-        prefsItem.target = self
-        editMenu.addItem(prefsItem)
-
-        let editMenuItem = NSMenuItem(title: "Edit", action: nil, keyEquivalent: "")
-        editMenuItem.submenu = editMenu
-
-        let mainMenu = NSMenu()
-        mainMenu.addItem(editMenuItem)
-        NSApp.mainMenu = mainMenu
+        let edit = NSMenu(title: "Edit")
+        edit.addItem(withTitle: "Select All", action: #selector(NSText.selectAll(_:)), keyEquivalent: "a")
+        edit.addItem(withTitle: "Copy", action: #selector(NSText.copy(_:)), keyEquivalent: "c")
+        edit.addItem(withTitle: "Paste", action: #selector(NSText.paste(_:)), keyEquivalent: "v")
+        edit.addItem(withTitle: "Cut", action: #selector(NSText.cut(_:)), keyEquivalent: "x")
+        edit.addItem(withTitle: "Undo", action: Selector(("undo:")), keyEquivalent: "z")
+        let item = NSMenuItem(title: "Edit", action: nil, keyEquivalent: "")
+        item.submenu = edit
+        let menu = NSMenu(); menu.addItem(item); NSApp.mainMenu = menu
     }
 }

@@ -10,8 +10,6 @@ let package = Package(
             path: "Sources/Walter",
             resources: [
                 .copy("Resources/AppIcon.icns"),
-                .copy("Resources/menubar_icon.png"),
-                .copy("Resources/menubar_icon@2x.png"),
             ]
         ),
         .testTarget(

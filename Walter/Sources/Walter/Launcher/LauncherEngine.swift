@@ -1,577 +1,200 @@
-// LauncherEngine.swift — Core search and launch logic
-//
-// Result layout:
-//   1. Calculator / converter answers — pinned to the top because they
-//      are computed answers, not search results, and there is nothing
-//      meaningful to score them against.
-//   2. A unified pool of fuzzy-scored results — apps, system commands,
-//      System Settings panes, aliases, and the "Change Theme" action all
-//      compete in one ranked list. Apps additionally receive a frecency
-//      boost so frequently-launched apps win against equally-named items
-//      from other categories.
-//   3. Web search fallback — always pinned to the bottom so the user can
-//      always escape to a web query.
-//
-// Called by: LauncherPanelController on every keystroke.
-
+// Computed answers lead, ordinary fuzzy-ranked results follow, web is fallback.
 import AppKit
 
 struct SearchResult {
     let title: String
     let subtitle: String
-    let icon: NSImage?
+    let icon: PreparedIcon?
     let action: ResultAction
 }
 
 enum ResultAction {
-    case open(String)
-    case shell(String)
+    case openApp(String)
     case copy(String)
     case url(String)
-    case openInEditor(String)      // opens a file in the user's preferred editor
-    case systemCommand(SystemCommand)
-    case enterThemePicker          // switches UI to theme browsing mode
-    case applyTheme(String)        // applies a theme by name and writes to config
+    case settings(String)
+    case enterThemePicker
+    case applyTheme(String)
 }
 
-class LauncherEngine {
-
-    private let appIndex: AppIndex
-    private let fileIndex: FileIndex
-    private let frecency = FrecencyTracker()
-    private let calculator = Calculator()
-    private let converter = Converter()
+final class LauncherEngine {
+    private let calculator: Calculator
+    private let converter: Converter
     private let prefPanes = PrefPaneIndex()
-    private var systemCommands: SystemCommands!
-    private weak var config: ConfigManager?
-
-    /// Prefix character that activates file-search mode. Sourced from
-    /// `[search] file_prefix` so users can pick whatever feels natural;
-    /// defaults to backtick because it's reachable on most layouts and
-    /// doesn't clash with anything else in the input vocabulary.
-    private var filePrefix: Character {
-        config?.search.filePrefix.first ?? "`"
+    private let config: ConfigManager
+    private let entries: () -> [AppEntry]
+    private let apps: AllowedApps
+    private let openURL: (URL) -> Void
+    private struct SymbolLookup {
+        let load: (String, String) -> PreparedIcon?
+        func image(name: String, description: String) -> PreparedIcon? { load(name, description) }
     }
+    private let symbols: SymbolLookup
 
-    init(config: ConfigManager, extraAppDirs: [String] = [], onIndexChanged: @escaping () -> Void = {}) {
+    // No scanning, watching, or persistence in this constructor. The application
+    // owns its index separately; tests provide entries and mock OS handoffs.
+    init(config: ConfigManager, entries: @escaping () -> [AppEntry],
+         apps: AllowedApps = AllowedApps(), locale: Locale = .current,
+         openURL: @escaping (URL) -> Void = { NSWorkspace.shared.open($0) },
+         symbolLoader: @escaping (String, String) -> PreparedIcon? = { _, _ in nil }) {
         self.config = config
-        systemCommands = SystemCommands(config: config)
-        appIndex = AppIndex(extraDirs: extraAppDirs, onChange: onIndexChanged)
-        fileIndex = FileIndex(dirs: config.search.fileDirs, onChange: onIndexChanged)
-    }
-
-    /// Forwards a refresh request to the underlying app index. The
-    /// panel controller calls this on every show so a freshly-installed
-    /// app appears immediately even when FSEvents missed the install.
-    func refreshIndexes() {
-        appIndex.refresh()
+        self.calculator = Calculator(locale: locale)
+        self.converter = Converter(locale: locale)
+        self.entries = entries
+        self.apps = apps
+        self.openURL = openURL
+        // Lookup only: default is empty for isolated tests. The app injects its
+        // worker-prepared symbol snapshot. Never negatively cache startup misses.
+        self.symbols = SymbolLookup(load: symbolLoader)
     }
 
     func search(query: String) -> [SearchResult] {
-        let q = query.trimmingCharacters(in: .whitespaces)
-        if q.isEmpty { return [] }
-
-        // File-search mode short-circuit. When the query starts with the
-        // file prefix (`'`) we drop straight into FileIndex and skip the
-        // app/pane/alias/computed-answer pool — the user's intent is
-        // explicit and mixing in apps would defeat the point.
-        if q.first == filePrefix {
-            return fileSearchResults(rawQuery: q)
+        let q = query.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !q.isEmpty else { return [] }
+        var answers: [SearchResult] = []
+        var scored: [(SearchResult, Int)] = []
+        let conversions = InputTiming.shared.measure(.conversion) { converter.convert(query: q) }
+        answers += conversions.map {
+            SearchResult(title: $0.title, subtitle: "\($0.subtitle) — Enter to copy",
+                         icon: symbols.image(name: "arrow.left.arrow.right", description: "Convert"),
+                         action: .copy($0.copyValue))
         }
-
-        var pinnedTop: [SearchResult] = []
-        var scored: [(result: SearchResult, score: Double)] = []
-
-        // ----- Pinned top: calculator + converter answers ----------------
-        // Computed answers, not searchable items — there is no fuzzy score
-        // to compare them against, so they always lead the list.
-
-        let conversions = converter.convert(query: q)
-        if !conversions.isEmpty {
-            let icon = NSImage(systemSymbolName: "arrow.left.arrow.right", accessibilityDescription: "Convert")
-            pinnedTop += conversions.map { conv in
-                SearchResult(
-                    title: conv.title,
-                    subtitle: "\(conv.subtitle) — Enter to copy",
-                    icon: icon,
-                    action: .copy(conv.copyValue)
-                )
-            }
+        if conversions.isEmpty, let answer = InputTiming.shared.measure(.calculator, { calculator.evaluate(query: q) }) {
+            answers.append(SearchResult(title: answer.answer, subtitle: "\(answer.expression) — Enter to copy",
+                icon: symbols.image(name: "equal.circle", description: "Calculator"),
+                action: .copy(answer.answer)))
         }
-        // Skip the calculator if a conversion already matched, otherwise
-        // "1920x1080" produces both a multiplication and a resolution conv.
-        if conversions.isEmpty, let calc = calculator.evaluate(query: q) {
-            let icon = NSImage(systemSymbolName: "equal.circle", accessibilityDescription: "Calculator")
-            pinnedTop.append(SearchResult(
-                title: calc.answer,
-                subtitle: "\(calc.expression) — Enter to copy",
-                icon: icon,
-                action: .copy(calc.answer)
-            ))
-        }
-
-        // ----- Scored pool: apps, sys cmds, panes, aliases, theme entry --
-        // All searchable items live in a single ranked list keyed by the
-        // fuzzy score against the query. Apps additionally receive a
-        // frecency boost so a heavily-used app outranks an unrelated
-        // pane / alias / system command with the same prefix.
-
-        // Aliases.
-        //
-        // Two flavours:
-        //   * Plain (no `{query}` in value): fuzzy-matched against the
-        //     alias key like everything else.
-        //   * Parameterized (value contains `{query}`): triggers in command
-        //     mode — the user types "<key> <rest>" and `<rest>` is
-        //     substituted into the value. When a parameterized alias is
-        //     hit we skip the rest of the scored pool so a YouTube search
-        //     ("y cat videos") doesn't surface unrelated app matches for
-        //     "cat" or "videos". Web fallback still appears at the bottom.
-        var parameterizedAliasMatched = false
-        if let aliases = config?.aliases {
-            let ql = q.lowercased()
-
-            // First, look for a "<key> <rest>" parameterized hit. This wins
-            // over plain alias matches because the user's intent is explicit.
-            if let firstSpace = q.firstIndex(of: " ") {
-                let key = String(q[..<firstSpace]).lowercased()
-                let rest = String(q[q.index(after: firstSpace)...]).trimmingCharacters(in: .whitespaces)
-                if let value = aliases[key], value.contains("{query}"), !rest.isEmpty {
-                    let displayName = config?.aliasNames[key] ?? key
-                    let result = makeParameterizedAliasResult(displayName: displayName, value: value, query: rest)
-                    pinnedTop.append(result)
-                    parameterizedAliasMatched = true
-                    // Trigger fetch for newly-encountered aliases so the
-                    // next render picks up the favicon even if config
-                    // wasn't reloaded since the alias was added.
-                    if let host = FaviconCache.hostname(for: value) {
-                        FaviconCache.shared.prefetch(hostnames: [host])
-                    }
-                }
-            }
-
-            if !parameterizedAliasMatched {
-                for (key, value) in aliases {
-                    // Skip parameterized aliases when the user hasn't typed
-                    // a query yet — showing them with no value is noise.
-                    if value.contains("{query}") { continue }
-
-                    let match = fuzzyMatch(query: ql, target: key)
-                    guard match.matched else { continue }
-
-                    var icon: NSImage? = NSImage(systemSymbolName: "link", accessibilityDescription: "Alias")
-                    let action: ResultAction
-                    let subtitle: String
-
-                    if value.hasPrefix("!") {
-                        let cmd = String(value.dropFirst())
-                        action = .shell(cmd)
-                        subtitle = "Run: \(cmd)"
-                    } else if value.hasPrefix("http://") || value.hasPrefix("https://") {
-                        action = .url(value)
-                        subtitle = value
-                        if let host = FaviconCache.hostname(for: value),
-                           let favicon = FaviconCache.shared.image(for: host) {
-                            icon = favicon
-                        }
-                    } else {
-                        action = .open(value)
-                        subtitle = value
-                    }
-
-                    let displayName = config?.aliasNames[key] ?? key
-                    let result = SearchResult(title: displayName, subtitle: subtitle, icon: icon, action: action)
-                    scored.append((result, Double(match.score)))
+        if let space = q.firstIndex(of: " ") {
+            let key = String(q[..<space]).lowercased()
+            let rest = String(q[q.index(after: space)...]).trimmingCharacters(in: .whitespaces)
+            if !rest.isEmpty, let value = config.aliases[key], value.contains("{query}"),
+               BrowserURL.parse(value.replacingOccurrences(of: "{query}", with: "x")) != nil {
+                let encoded = BrowserURL.encodeQuery(rest)
+                let target = value.replacingOccurrences(of: "{query}", with: encoded)
+                if BrowserURL.parse(target) != nil {
+                    answers.append(aliasResult(name: "\(config.aliasNames[key] ?? key) → \(rest)", value: target))
+                    return answers + [webFallback(q)]
                 }
             }
         }
-
-        // Skip the rest of the scored pool if a parameterized alias is
-        // active — the user's intent is explicit, no need to suggest
-        // unrelated apps that happen to fuzzy-match the alias arguments.
-        if parameterizedAliasMatched {
-            var results = pinnedTop
-            // Still emit the web fallback so the user can escape to a
-            // generic search if they typed the wrong alias key.
-            results.append(makeWebFallback(query: q))
-            return results
+        InputTiming.shared.measure(.aliases) {
+            for (key, value) in config.aliases where !value.contains("{query}") {
+                guard ConfigManager.isAllowedAliasValue(value, appRoots: apps.roots.map(\.path)) else { continue }
+                let match = fuzzyMatch(query: q, target: key)
+                if match.matched {
+                    scored.append((aliasResult(name: config.aliasNames[key] ?? key, value: value), match.score))
+                }
+            }
         }
-
-        // "Change Theme" entry — fuzzy on a fixed label.
+        for (keyword, url) in config.bookmarks {
+            let match = fuzzyMatch(query: q, target: keyword)
+            if match.matched {
+                scored.append((SearchResult(title: keyword, subtitle: url,
+                    icon: symbols.image(name: "bookmark", description: "Bookmark"),
+                    action: .url(url)), match.score))
+            }
+        }
         let themeMatch = fuzzyMatch(query: q, target: "Change Theme")
         if themeMatch.matched {
-            let icon = NSImage(systemSymbolName: "paintpalette", accessibilityDescription: "Theme")
-            let result = SearchResult(
-                title: "Change Theme",
-                subtitle: "Browse and apply built-in themes",
-                icon: icon,
-                action: .enterThemePicker
-            )
-            scored.append((result, Double(themeMatch.score)))
+            scored.append((SearchResult(title: "Change Theme", subtitle: "Browse built-in and user themes",
+                icon: symbols.image(name: "paintpalette", description: "Theme"),
+                action: .enterThemePicker), themeMatch.score))
         }
-
-        // System commands.
-        if config?.search.showSystemCommands != false {
-            for item in systemCommands.search(query: q) {
-                let icon = NSImage(systemSymbolName: item.command.iconName, accessibilityDescription: item.command.name)
-                let result = SearchResult(
-                    title: item.command.name,
-                    subtitle: item.command.subtitle,
-                    icon: icon,
-                    action: .systemCommand(item.command)
-                )
-                scored.append((result, Double(item.score)))
+        InputTiming.shared.measure(.settings) {
+            for item in prefPanes.search(query: q) {
+                scored.append((SearchResult(title: item.pane.name, subtitle: "System Settings",
+                    icon: symbols.image(name: item.pane.iconName, description: item.pane.name),
+                    action: .settings(item.pane.url)), item.score))
             }
         }
-
-        // System Settings panes.
-        for item in prefPanes.search(query: q) {
-            let icon = NSImage(systemSymbolName: item.pane.iconName, accessibilityDescription: item.pane.name)
-            let result = SearchResult(
-                title: item.pane.name,
-                subtitle: "System Settings",
-                icon: icon,
-                action: .url(item.pane.url)
-            )
-            scored.append((result, Double(item.score)))
+        InputTiming.shared.measure(.apps) {
+            let excluded = Set(config.search.excludedApps.map { $0.lowercased() })
+            for entry in entries() where !excluded.contains(entry.nameLower) {
+                let match = fuzzyMatch(query: q, target: entry.name)
+                if match.matched {
+                    scored.append((SearchResult(title: entry.name,
+                        subtitle: config.search.showPath ? entry.path : "", icon: entry.icon,
+                        action: .openApp(entry.path)), match.score))
+                }
+            }
         }
-
-        // Apps with frecency boost.
-        // The boost is capped so heavy use of one app cannot drown out a
-        // better-matching different app. Without the cap, opening the
-        // launcher and typing "to" while Stremio has been launched
-        // dozens of times would always surface Stremio above Tolaria,
-        // even though "to" is a clean prefix of Tolaria and a poor
-        // scattered match in Stremio. The cap is comparable to the
-        // prefix-match bonus, so frecency tunes ranking among similar
-        // matches but cannot overwhelm a clearly stronger candidate.
-        let excluded = Set(config?.search.excludedApps.map { $0.lowercased() } ?? [])
-        let showPath = config?.search.showPath ?? true
-        let maxFrecencyBoost: Double = 40
-        for entry in appIndex.allEntries {
-            if excluded.contains(entry.nameLower) { continue }
-            let match = fuzzyMatch(query: q, target: entry.name)
-            guard match.matched else { continue }
-            let rawBoost = frecency.score(for: entry.path) * 10
-            let frecencyBoost = min(rawBoost, maxFrecencyBoost)
-            let result = SearchResult(
-                title: entry.name,
-                subtitle: showPath ? entry.path : "",
-                icon: entry.icon,
-                action: .open(entry.path)
-            )
-            scored.append((result, Double(match.score) + frecencyBoost))
+        InputTiming.shared.measure(.ranking) {
+            scored.sort {
+                if $0.1 != $1.1 { return $0.1 > $1.1 }
+                return $0.0.title.localizedCaseInsensitiveCompare($1.0.title) == .orderedAscending
+            }
         }
-
-        scored.sort { $0.score > $1.score }
-
-        var results = pinnedTop
-        results += scored.prefix(25).map { $0.result }
-
-        // ----- Pinned bottom: web search fallback -----------------------
-
-        results.append(makeWebFallback(query: q))
-
-        return results
+        return answers + scored.prefix(25).map { $0.0 } + [webFallback(q)]
     }
 
-    /// Builds a search result for the parameterized alias that just matched.
-    /// `value` is the raw alias value (URL, !shell, or path) with `{query}`
-    /// placeholders; `query` is the text the user typed after the alias key.
-    private func makeParameterizedAliasResult(displayName: String, value: String, query: String) -> SearchResult {
-        let action: ResultAction
-        let subtitle: String
-        var icon: NSImage? = NSImage(systemSymbolName: "link", accessibilityDescription: "Alias")
+    private func aliasResult(name: String, value: String) -> SearchResult {
+        let isURL = BrowserURL.parse(value) != nil
+        return SearchResult(title: name, subtitle: value,
+            icon: symbols.image(name: isURL ? "link" : "app", description: "Alias"),
+            action: isURL ? .url(value) : .openApp(value))
+    }
 
-        if value.hasPrefix("!") {
-            let cmd = String(value.dropFirst()).replacingOccurrences(of: "{query}", with: query)
-            action = .shell(cmd)
-            subtitle = "Run: \(cmd)"
-        } else if value.hasPrefix("http://") || value.hasPrefix("https://") {
-            let encoded = query.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? query
-            let url = value.replacingOccurrences(of: "{query}", with: encoded)
-            action = .url(url)
-            subtitle = url
-            // Site favicon if we have one cached; otherwise the link symbol.
-            if let host = FaviconCache.hostname(for: value),
-               let favicon = FaviconCache.shared.image(for: host) {
-                icon = favicon
-            }
+    private func webFallback(_ query: String) -> SearchResult {
+        let encoded = BrowserURL.encodeQuery(query)
+        let engine = config.search.webSearch
+        let target: String
+        let name: String
+        if engine.contains("{query}"), BrowserURL.parse(engine.replacingOccurrences(of: "{query}", with: "x")) != nil {
+            target = engine.replacingOccurrences(of: "{query}", with: encoded)
+            name = URL(string: target)?.host ?? "Web"
         } else {
-            let path = value.replacingOccurrences(of: "{query}", with: query)
-            action = .open(path)
-            subtitle = path
+            switch engine.lowercased() {
+            case "duckduckgo", "ddg": name = "DuckDuckGo"; target = "https://duckduckgo.com/?q=\(encoded)"
+            case "bing": name = "Bing"; target = "https://www.bing.com/search?q=\(encoded)"
+            default: name = "Google"; target = "https://www.google.com/search?q=\(encoded)"
+            }
         }
-
-        return SearchResult(
-            title: "\(displayName) → \(query)",
-            subtitle: subtitle,
-            icon: icon,
-            action: action
-        )
+        return SearchResult(title: "Search \(name) for \"\(query)\"", subtitle: "Open in default browser",
+            icon: symbols.image(name: "magnifyingglass.circle", description: "Web search"),
+            action: .url(target))
     }
 
-    /// Builds the file-search result list for queries beginning with the
-    /// file prefix. The web fallback still appears so a typo'd file name
-    /// can be sent to the search engine without leaving prefix mode.
-    private func fileSearchResults(rawQuery: String) -> [SearchResult] {
-        // Strip the prefix character (and any whitespace right after it)
-        // before fuzzy-matching against filenames.
-        let stripped = rawQuery
-            .dropFirst()
-            .trimmingCharacters(in: .whitespaces)
-
-        let dirs = config?.search.fileDirs ?? []
-
-        // Setup path: if the user hasn't configured any file_dirs we
-        // surface a single actionable row that opens config.toml in their
-        // editor, instead of looking broken or silently doing nothing.
-        if dirs.isEmpty {
-            return fileSearchSetupResults()
-        }
-
-        var results: [SearchResult] = []
-        let prefixChar = String(filePrefix)
-
-        if stripped.isEmpty {
-            // Prefix typed but nothing else — show a quick reminder of
-            // what mode we're in plus the dir count, instead of dumping
-            // every indexed file into the panel.
-            let icon = NSImage(systemSymbolName: "doc.text.magnifyingglass",
-                               accessibilityDescription: "File search")
-            let dirsBlurb = dirs.count == 1 ? "1 directory" : "\(dirs.count) directories"
-            results.append(SearchResult(
-                title: "Search files",
-                subtitle: "Type a filename after \(prefixChar) to search \(dirsBlurb)",
-                icon: icon,
-                action: .copy("")
-            ))
-            return results
-        }
-
-        let matches = fileIndex.search(query: stripped)
-            .sorted { $0.score > $1.score }
-            .prefix(25)
-
-        let showPath = config?.search.showPath ?? true
-        for (entry, _) in matches {
-            let icon = NSWorkspace.shared.icon(forFile: entry.path)
-            icon.size = NSSize(width: 64, height: 64)
-            results.append(SearchResult(
-                title: entry.name,
-                subtitle: showPath ? entry.path : "",
-                icon: icon,
-                action: .open(entry.path)
-            ))
-        }
-
-        // Always offer the web-search escape hatch — typing `<prefix>foo`
-        // with no matches shouldn't strand the user.
-        results.append(makeWebFallback(query: stripped))
-
-        return results
-    }
-
-    /// Two-row guidance shown when the user hits the file prefix but
-    /// hasn't told Walter which directories to index. The first row is a
-    /// one-click jump to config.toml so the user can fix it without
-    /// leaving the launcher; the second row carries the example syntax
-    /// they need to paste in.
-    private func fileSearchSetupResults() -> [SearchResult] {
-        var results: [SearchResult] = []
-        let bookIcon = NSImage(systemSymbolName: "book.closed",
-                               accessibilityDescription: "Documentation")
-
-        if let config = config {
-            let openIcon = NSImage(systemSymbolName: "doc.text.magnifyingglass",
-                                   accessibilityDescription: "Open config")
-            results.append(SearchResult(
-                title: "File search isn't configured yet",
-                subtitle: "Press Enter to open config.toml — add `file_dirs` under [search]",
-                icon: openIcon,
-                action: .openInEditor(config.configURL.path)
-            ))
-        }
-
-        // Carry the canonical example as a second row so the user can
-        // simply read it off the screen rather than open the docs.
-        results.append(SearchResult(
-            title: "Example",
-            subtitle: "[search] file_dirs = ~/Documents, ~/Desktop, ~/Downloads",
-            icon: bookIcon,
-            action: .copy("file_dirs = ~/Documents, ~/Desktop, ~/Downloads")
-        ))
-
-        return results
-    }
-
-    /// Builds the trailing web-search fallback result. Honors the user's
-    /// configured engine, which may be a built-in name (google/ddg/bing)
-    /// or a full URL template containing `{query}`.
-    private func makeWebFallback(query: String) -> SearchResult {
-        let encoded = query.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? query
-        let engine = config?.search.webSearch ?? "google"
-        let (engineName, webURL) = searchEngineURL(engine: engine, query: encoded)
-        let webIcon = NSImage(systemSymbolName: "magnifyingglass.circle", accessibilityDescription: "Web search")
-        return SearchResult(
-            title: "Search \(engineName) for \"\(query)\"",
-            subtitle: "Open in default browser",
-            icon: webIcon,
-            action: .url(webURL)
-        )
-    }
-
-    /// Executes a result action and records frecency for app launches.
     func launch(result: SearchResult) {
         switch result.action {
-        case .open(let path):
-            frecency.recordLaunch(path: path)
-            NSWorkspace.shared.open(URL(fileURLWithPath: path))
-        case .url(let urlString):
-            if let url = URL(string: urlString) {
-                NSWorkspace.shared.open(url)
-            }
-        case .shell(let command):
-            let task = Process()
-            task.launchPath = "/bin/sh"
-            task.arguments = ["-c", command]
-            try? task.run()
-        case .copy(let text):
+        case .openApp(let path): apps.launch(path: path, open: openURL)
+        case .url(let value):
+            if let url = BrowserURL.parse(value) { openURL(url) }
+        case .settings(let value):
+            // Only locally bundled pane links, never arbitrary URL schemes.
+            if prefPanes.panes.contains(where: { $0.url == value }), let url = URL(string: value) { openURL(url) }
+        case .copy(let value):
             NSPasteboard.general.clearContents()
-            NSPasteboard.general.setString(text, forType: .string)
-        case .openInEditor(let path):
-            let editor = SystemCommands.resolveEditorPath(configured: config?.general.editor ?? "")
-            NSWorkspace.shared.open(
-                [URL(fileURLWithPath: path)],
-                withApplicationAt: URL(fileURLWithPath: editor),
-                configuration: NSWorkspace.OpenConfiguration()
-            )
-        case .systemCommand(let cmd):
-            if cmd.needsConfirmation {
-                guard SystemCommands.confirm(action: cmd.name) else { return }
-            }
-            cmd.action()
-        case .enterThemePicker, .applyTheme:
-            // Handled by LauncherPanelController, not here
-            break
+            NSPasteboard.general.setString(value, forType: .string)
+        case .enterThemePicker, .applyTheme: break
         }
     }
 
-    /// Returns themes (built-in + user-defined) as picker results,
-    /// filtered by query. Used when the UI is in theme-picker mode.
-    /// Built-ins keep their curated order; user themes follow alphabetically
-    /// under a "Custom" group label.
     func themeResults(filter: String) -> [SearchResult] {
-        let currentTheme = config?.theme.name?.lowercased()
-        let icon = NSImage(systemSymbolName: "paintpalette", accessibilityDescription: "Theme")
-
-        let builtins: [(name: String, group: String)] =
-            [("spotlight", "System"),
-             ("catppuccin-mocha", "Dark"), ("catppuccin-macchiato", "Dark"),
-             ("catppuccin-frappe", "Dark"), ("catppuccin-latte", "Light"),
-             ("nord", "Dark"), ("dracula", "Dark"), ("gruvbox", "Dark"),
-             ("solarized-dark", "Dark"), ("solarized-light", "Light"),
-             ("rose-pine", "Dark"), ("rose-pine-moon", "Dark"), ("rose-pine-dawn", "Light"),
-             ("tokyo-night", "Dark"), ("one-dark", "Dark"), ("kanagawa", "Dark"),
-             ("everforest", "Dark"), ("everforest-light", "Light"),
-             ("ayu-dark", "Dark"), ("ayu-light", "Light"), ("github-light", "Light")]
-
-        let userNames = (config?.userThemes.keys ?? Dictionary<String, ThemePreset>().keys)
-            .sorted()
-
-        // Built-ins first, then user themes (excluding any name collisions
-        // that would already be displayed under a built-in slot).
-        let builtinNames = Set(builtins.map { $0.name })
-        let combined: [(name: String, group: String)] =
-            builtins + userNames
-                .filter { !builtinNames.contains($0) }
-                .map { ($0, "Custom") }
-
         let q = filter.trimmingCharacters(in: .whitespaces)
-
-        return combined.compactMap { theme in
-            if !q.isEmpty {
-                let match = fuzzyMatch(query: q, target: theme.name)
-                guard match.matched else { return nil }
-            }
-            let displayName = theme.name.split(separator: "-")
-                .map { $0.prefix(1).uppercased() + $0.dropFirst() }
-                .joined(separator: " ")
-            let isCurrent = theme.name == currentTheme
-            let subtitle = "\(theme.group)\(isCurrent ? " — current" : "")"
-            return SearchResult(
-                title: displayName,
-                subtitle: subtitle,
-                icon: icon,
-                action: .applyTheme(theme.name)
-            )
+        return config.allThemes.keys.sorted().compactMap { name in
+            guard q.isEmpty || fuzzyMatch(query: q, target: name).matched else { return nil }
+            let title = name.split(separator: "-").map { $0.prefix(1).uppercased() + $0.dropFirst() }.joined(separator: " ")
+            let group = config.userThemes[name] == nil ? "Built-in" : "Custom"
+            return SearchResult(title: title, subtitle: group + (config.theme.name == name ? " — current" : ""),
+                icon: symbols.image(name: "paintpalette", description: "Theme"), action: .applyTheme(name))
         }
     }
 
-    /// Writes the theme name into config.toml. Hot-reload picks it up.
     func applyTheme(name: String) {
-        guard let config = config else { return }
-        let url = config.configURL
-        guard var content = try? String(contentsOf: url, encoding: .utf8) else { return }
+        config.selectTheme(name)
+    }
+}
 
-        let lines = content.components(separatedBy: "\n")
-        var result: [String] = []
-        var inTheme = false
-        var nameWritten = false
-
-        for line in lines {
-            let trimmed = line.trimmingCharacters(in: .whitespaces)
-
-            if trimmed.hasPrefix("[") && trimmed.hasSuffix("]") {
-                if inTheme && !nameWritten {
-                    result.append("name = \"\(name)\"")
-                    nameWritten = true
-                }
-                let section = String(trimmed.dropFirst().dropLast())
-                inTheme = (section == "theme")
-            }
-
-            if inTheme {
-                let key = trimmed.split(separator: "=", maxSplits: 1).first?
-                    .trimmingCharacters(in: .whitespaces) ?? ""
-                if key == "name" || key == "# name" {
-                    result.append("name = \"\(name)\"")
-                    nameWritten = true
-                    continue
-                }
-            }
-
-            result.append(line)
-        }
-
-        if !nameWritten {
-            // Shouldn't happen, but just in case
-            result.insert("name = \"\(name)\"", at: result.firstIndex(of: "[theme]")?.advanced(by: 1) ?? result.endIndex)
-        }
-
-        content = result.joined(separator: "\n")
-        try? content.write(to: url, atomically: true, encoding: .utf8)
+/// Local URL construction/validation only; never resolves DNS or fetches data.
+enum BrowserURL {
+    static func parse(_ value: String) -> URL? {
+        guard let url = URL(string: value), ["http", "https"].contains(url.scheme?.lowercased() ?? ""),
+              let host = url.host, !host.isEmpty else { return nil }
+        return url
     }
 
-    /// Resolves the configured `engine` string into a (display name, URL)
-    /// pair. Accepts either a built-in name (google / duckduckgo / bing)
-    /// or a full URL template containing `{query}` — `query` is already
-    /// URL-encoded by the caller.
-    private func searchEngineURL(engine: String, query: String) -> (name: String, url: String) {
-        if engine.contains("{query}") {
-            let url = engine.replacingOccurrences(of: "{query}", with: query)
-            // Pretty-print the host so the result line reads "Search
-            // youtube.com for ..." instead of repeating the full URL.
-            let name = URL(string: url)?.host?.replacingOccurrences(of: "www.", with: "") ?? "Web"
-            return (name, url)
-        }
-        switch engine.lowercased() {
-        case "duckduckgo", "ddg":
-            return ("DuckDuckGo", "https://duckduckgo.com/?q=\(query)")
-        case "bing":
-            return ("Bing", "https://www.bing.com/search?q=\(query)")
-        default:
-            return ("Google", "https://www.google.com/search?q=\(query)")
-        }
+    static func encodeQuery(_ query: String) -> String {
+        // Encode separators too, so typed '&' cannot inject another parameter.
+        query.addingPercentEncoding(withAllowedCharacters: CharacterSet.alphanumerics.union(CharacterSet(charactersIn: "-._~"))) ?? ""
     }
 }

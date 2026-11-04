@@ -1,186 +1,34 @@
-// Converter.swift — Currency and unit conversion
+// Converter.swift — Offline unit conversion using local factors.
 //
-// Detects patterns like:
-//   "$100 in euro"     → currency conversion
-//   "100 usd in try"   → currency conversion
-//   "100 km in miles"  → unit conversion
-//   "$50 in"           → shows popular currency targets as completion list
-//
-// Currency rates are fetched from open.er-api.com (free, no API key) on
-// startup and cached for the session. Falls back gracefully if offline.
-//
-// Unit conversions are fully offline (hardcoded factors).
+// Detects patterns like "100 km in miles" and "100 c to f".
+// A missing or partial target shows compatible units as completions.
 
 import Foundation
 
 // MARK: - Public result type
 
 struct ConversionResult {
-    let title: String       // e.g. "€92.15"
-    let subtitle: String    // e.g. "$100 USD → EUR"
-    let copyValue: String   // e.g. "92.15"
+    let title: String       // e.g. "212 °F"
+    let subtitle: String    // e.g. "100 °C → °F"
+    let copyValue: String   // e.g. "212"
 }
 
 // MARK: - Converter
 
 class Converter {
+    private let locale: Locale
 
-    // Exchange rates relative to USD (fetched once, cached in memory)
-    private var rates: [String: Double] = [:]
-    private var ratesLoaded = false
-
-    init() {
-        fetchRates()
-    }
+    init(locale: Locale = .current) { self.locale = locale }
 
     /// Attempts to parse the query as a conversion. Returns multiple results
     /// (completion list) when the target is partial or missing.
     func convert(query: String) -> [ConversionResult] {
         let q = query.trimmingCharacters(in: .whitespaces).lowercased()
 
-        // Try currency first, then units
-        if let results = parseCurrency(q), !results.isEmpty {
-            return results
-        }
         if let results = parseUnit(q), !results.isEmpty {
             return results
         }
         return []
-    }
-
-    // =========================================================================
-    // MARK: - Currency
-    // =========================================================================
-
-    // Common symbols → ISO code
-    private static let symbolMap: [String: String] = [
-        "$": "usd", "€": "eur", "£": "gbp", "¥": "jpy", "₺": "try",
-        "₹": "inr", "₩": "krw", "₽": "rub", "₿": "btc", "zł": "pln",
-        "kr": "sek", "r$": "brl", "฿": "thb",
-    ]
-
-    // Name/alias → ISO code
-    private static let nameMap: [String: String] = [
-        "dollar": "usd", "dollars": "usd", "usd": "usd", "us": "usd",
-        "euro": "eur", "euros": "eur", "eur": "eur",
-        "pound": "gbp", "pounds": "gbp", "gbp": "gbp", "sterling": "gbp",
-        "yen": "jpy", "jpy": "jpy",
-        "lira": "try", "try": "try", "tl": "try", "turkish": "try",
-        "yuan": "cny", "cny": "cny", "rmb": "cny",
-        "rupee": "inr", "rupees": "inr", "inr": "inr",
-        "won": "krw", "krw": "krw",
-        "ruble": "rub", "rubles": "rub", "rub": "rub",
-        "bitcoin": "btc", "btc": "btc",
-        "franc": "chf", "chf": "chf", "swiss": "chf",
-        "real": "brl", "brl": "brl",
-        "peso": "mxn", "mxn": "mxn",
-        "cad": "cad", "canadian": "cad",
-        "aud": "aud", "australian": "aud",
-        "nzd": "nzd",
-        "sek": "sek", "krona": "sek", "swedish": "sek",
-        "nok": "nok", "norwegian": "nok",
-        "dkk": "dkk", "danish": "dkk",
-        "pln": "pln", "zloty": "pln", "polish": "pln",
-        "thb": "thb", "baht": "thb",
-        "sgd": "sgd", "singapore": "sgd",
-        "hkd": "hkd",
-        "korean": "krw",
-        "zar": "zar", "rand": "zar",
-        "aed": "aed", "dirham": "aed",
-    ]
-
-    // Popular currencies for the completion list when target is empty
-    private static let popularTargets = ["eur", "gbp", "try", "jpy", "cny", "cad", "aud", "chf", "inr", "brl"]
-
-    private func parseCurrency(_ q: String) -> [ConversionResult]? {
-        guard ratesLoaded else { return nil }
-
-        // Pattern: [symbol]<amount> [currency] [in|to] [target]
-        var remaining = q
-        var fromCurrency: String?
-        var amount: Double?
-
-        // Check for leading symbol: $100, €50, £20, ₺500
-        for (symbol, code) in Self.symbolMap {
-            if remaining.hasPrefix(symbol) {
-                fromCurrency = code
-                remaining = String(remaining.dropFirst(symbol.count)).trimmingCharacters(in: .whitespaces)
-                break
-            }
-        }
-
-        // Extract the number
-        let numPattern = #"^[\d,]+\.?\d*"#
-        guard let numRange = remaining.range(of: numPattern, options: .regularExpression) else {
-            return nil
-        }
-        let numStr = remaining[numRange].replacingOccurrences(of: ",", with: "")
-        guard let parsedAmount = Double(numStr) else { return nil }
-        amount = parsedAmount
-        remaining = String(remaining[numRange.upperBound...]).trimmingCharacters(in: .whitespaces)
-
-        // Extract source currency name if we didn't get it from a symbol
-        if fromCurrency == nil {
-            let word = remaining.split(separator: " ").first.map(String.init) ?? remaining
-            if let code = Self.nameMap[word] {
-                fromCurrency = code
-                remaining = String(remaining.dropFirst(word.count)).trimmingCharacters(in: .whitespaces)
-            }
-        }
-
-        guard let from = fromCurrency, let amt = amount else { return nil }
-
-        // Check for "in" or "to" separator
-        for sep in ["in", "to"] {
-            if remaining.hasPrefix(sep) {
-                remaining = String(remaining.dropFirst(sep.count)).trimmingCharacters(in: .whitespaces)
-                break
-            }
-        }
-
-        // If there's a target specified, fuzzy match it
-        if !remaining.isEmpty {
-            let matchingCodes = Self.nameMap
-                .filter { $0.key.hasPrefix(remaining) || $0.value.hasPrefix(remaining) }
-                .map { $0.value }
-            let uniqueCodes = Array(Set(matchingCodes))
-
-            if uniqueCodes.isEmpty {
-                return nil
-            }
-
-            return uniqueCodes.prefix(8).compactMap { to -> ConversionResult? in
-                convertCurrency(amount: amt, from: from, to: to)
-            }
-        }
-
-        // No target — show popular currencies as completion list
-        let targets = Self.popularTargets.filter { $0 != from }
-        return targets.compactMap { to in
-            convertCurrency(amount: amt, from: from, to: to)
-        }
-    }
-
-    private func convertCurrency(amount: Double, from: String, to: String) -> ConversionResult? {
-        // Convert via USD as the base
-        guard let fromRate = rate(for: from), let toRate = rate(for: to) else { return nil }
-        let inUSD = amount / fromRate
-        let result = inUSD * toRate
-
-        let formatted = formatCurrency(result, code: to)
-        let fromUpper = from.uppercased()
-        let toUpper = to.uppercased()
-
-        return ConversionResult(
-            title: "\(formatted) \(toUpper)",
-            subtitle: "\(formatNumber(amount)) \(fromUpper) → \(toUpper)",
-            copyValue: formatNumber(result)
-        )
-    }
-
-    private func rate(for code: String) -> Double? {
-        if code == "usd" { return 1.0 }
-        return rates[code]
     }
 
     // =========================================================================
@@ -321,44 +169,10 @@ class Converter {
 
     private func formatNumber(_ value: Double) -> String {
         let formatter = NumberFormatter()
+        formatter.locale = locale
         formatter.numberStyle = .decimal
         formatter.maximumFractionDigits = value == value.rounded() ? 0 : 4
         formatter.minimumFractionDigits = 0
         return formatter.string(from: NSNumber(value: value)) ?? String(value)
-    }
-
-    private func formatCurrency(_ value: Double, code: String) -> String {
-        let formatter = NumberFormatter()
-        formatter.numberStyle = .decimal
-        formatter.maximumFractionDigits = 2
-        formatter.minimumFractionDigits = 2
-        return formatter.string(from: NSNumber(value: value)) ?? String(value)
-    }
-
-    // =========================================================================
-    // MARK: - API fetch
-    // =========================================================================
-
-    private func fetchRates() {
-        guard let url = URL(string: "https://open.er-api.com/v6/latest/USD") else { return }
-
-        URLSession.shared.dataTask(with: url) { [weak self] data, _, error in
-            guard let data = data, error == nil else {
-                print("Converter: failed to fetch rates — \(error?.localizedDescription ?? "unknown")")
-                return
-            }
-
-            guard let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-                  let ratesDict = json["rates"] as? [String: Double] else {
-                print("Converter: invalid rate response")
-                return
-            }
-
-            DispatchQueue.main.async {
-                self?.rates = Dictionary(uniqueKeysWithValues: ratesDict.map { ($0.key.lowercased(), $0.value) })
-                self?.ratesLoaded = true
-                print("Converter: \(ratesDict.count) exchange rates loaded")
-            }
-        }.resume()
     }
 }

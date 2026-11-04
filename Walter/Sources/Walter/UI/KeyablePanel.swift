@@ -1,8 +1,4 @@
-// KeyablePanel.swift — NSPanel subclass that accepts keyboard input and dragging
-//
-// Borderless panels can't become key and can't be dragged by default.
-// This subclass fixes both: typing works, and clicking anywhere on the
-// panel background starts a window drag (like dragging a title bar).
+// Borderless, fixed-position panel with local keyboard shortcuts.
 
 import AppKit
 
@@ -14,26 +10,56 @@ class KeyablePanel: NSPanel {
     // interpretation, so the text field's doCommandBy: never sees them — an
     // unhandled Cmd+Return just beeps. We intercept the launcher's Cmd
     // shortcuts here and forward to the controller.
-    var onCommandReturn: (() -> Void)?        // Cmd+Return → reveal in Finder
+    var onCommandReturn: (() -> Void)? // Reveal a revalidated allowed app only.
+    var closeBinding: HotkeyBinding?
+    var onClose: (() -> Void)?
+    var onQuit: (() -> Void)?
+    var onConfigLocation: (() -> Void)?
     var onQuickSelect: ((Int) -> Void)?       // Cmd+1…9 → launch Nth result
     var onCopyResult: (() -> Bool)?           // Cmd+C → copy result; returns true if handled
 
-    // Allow dragging the borderless panel by clicking anywhere on the background.
-    // Text fields and other controls still receive clicks normally — this only
-    // fires when the click lands on the panel's content view itself.
     override var isMovableByWindowBackground: Bool {
-        get { true }
+        get { false }
+        set {}
+    }
+    override var isMovable: Bool {
+        get { false }
         set {}
     }
 
+    override func update() {
+        InputTiming.shared.windowUpdate { super.update() }
+    }
+
+    override func sendEvent(_ event: NSEvent) {
+        let timing = event.type == .keyDown ? InputTiming.shared.beginKeyEvent(timestamp: event.timestamp) : nil
+        defer { InputTiming.shared.endKeyEvent(timing) }
+        if handlePopupShortcut(event) { return }
+        if event.type == .keyDown, closeBinding?.matches(event) == true {
+            onClose?()
+            return
+        }
+        super.sendEvent(event)
+    }
+
+    private func handlePopupShortcut(_ event: NSEvent) -> Bool {
+        guard event.type == .keyDown else { return false }
+        return PopupShortcuts.handle(characters: event.charactersIgnoringModifiers ?? "",
+            modifiers: event.modifierFlags, popupActive: isVisible && isKeyWindow,
+            quit: onQuit, showConfigLocation: onConfigLocation)
+    }
+
     override func performKeyEquivalent(with event: NSEvent) -> Bool {
+        // AppKit can consult other windows for key equivalents while an alert
+        // is key. Never route commands into the popup behind that alert.
+        guard isVisible && isKeyWindow else { return super.performKeyEquivalent(with: event) }
+        if handlePopupShortcut(event) { return true }
         // Only handle pure Command combos here; let everything else
         // (Cmd+Shift+…, Cmd+A/V/X text editing, etc.) flow to the responder
         // chain and the hidden Edit menu as before.
         let flags = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
         guard flags == .command else { return super.performKeyEquivalent(with: event) }
 
-        // Cmd+Return / keypad-Enter → reveal in Finder.
         if event.keyCode == 36 || event.keyCode == 76 {
             onCommandReturn?()
             return true

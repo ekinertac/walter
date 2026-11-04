@@ -1,24 +1,16 @@
-// NSColorHex.swift — Parse CSS hex colour strings into NSColor
-//
-// Supports "#rrggbb" format from config.toml theme values.
-
+// Local CSS hex colors: #rrggbb or #rrggbbaa (including transparent themes).
 import AppKit
 
 extension NSColor {
     convenience init?(hex: String) {
-        let hex = hex.trimmingCharacters(in: .whitespacesAndNewlines)
-            .replacingOccurrences(of: "#", with: "")
-
-        guard hex.count == 6 else { return nil }
-
-        var rgb: UInt64 = 0
-        guard Scanner(string: hex).scanHexInt64(&rgb) else { return nil }
-
-        self.init(
-            red: CGFloat((rgb >> 16) & 0xFF) / 255.0,
-            green: CGFloat((rgb >> 8) & 0xFF) / 255.0,
-            blue: CGFloat(rgb & 0xFF) / 255.0,
-            alpha: 1.0
-        )
+        var text = hex.trimmingCharacters(in: .whitespacesAndNewlines)
+        if text.hasPrefix("#") { text.removeFirst() }
+        guard text.count == 6 || text.count == 8, let value = UInt64(text, radix: 16) else { return nil }
+        let hasAlpha = text.count == 8
+        let rgb = hasAlpha ? value >> 8 : value
+        self.init(red: CGFloat((rgb >> 16) & 255) / 255,
+                  green: CGFloat((rgb >> 8) & 255) / 255,
+                  blue: CGFloat(rgb & 255) / 255,
+                  alpha: hasAlpha ? CGFloat(value & 255) / 255 : 1)
     }
 }

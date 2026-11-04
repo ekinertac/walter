@@ -1,365 +1,262 @@
-# Walter Configuration Reference
+# Walter configuration reference
 
-Walter reads its config from `~/.config/walter/config.toml`. The file is
-auto-created on first launch with every option present and commented.
-Saving the file applies changes live — no relaunch needed.
+Default config: `~/.config/walter/config.toml`. `WALTER_CONFIG` overrides that
+file's path. Themes always live in sibling `themes/`; the app seeds
+`example.theme` if missing. Config/theme changes reload locally without showing
+a hidden popup. Theme selection writes only the config file. There is no
+`UserDefaults`, history, ranking database, favicon cache, or new storage scheme.
 
-Themes can also be loaded from `~/.config/walter/themes/*.theme` (plain
-text, see [Themes](#themes) below).
+## Parser subset
 
-This document covers every setting Walter understands. Each section maps
-1:1 to a `[section]` heading in `config.toml`.
-
----
+Sections, `key = value`, quoted strings (straight or smart double quotes),
+quoted keys in `[app_hotkeys]` and `[bookmarks]`, booleans, numbers, and comma-separated
+`excluded_apps` are supported. Whole-line
+comments begin with `#`; inline comments after quoted values are supported.
+This is not full TOML: no arbitrary arrays, escaping, or general nested tables.
+Unknown/removed settings are ignored. Missing values use model defaults.
+An invalid hotkey is reported rather than silently interpreted as Space.
 
 ## `[theme]`
 
-Visual styling of the launcher window.
+| Key | Default | Behavior |
+| --- | --- | --- |
+| `name` | unset | Built-in or user theme name, case-insensitive. Overrides core colors. |
+| `background` | `"#1e1e2e"` | Window background; transparent `#00000000` gives vibrancy-only appearance. |
+| `foreground` | `"#cdd6f4"` | Main text color. |
+| `accent` | `"#cba6f7"` | Accent/selection base color. |
+| `selection` | unset | Otherwise accent at 25% opacity. |
+| `subtitle` | unset | Otherwise foreground at 60% opacity. |
+| `border` | unset | Optional border color. |
+| `placeholder_color` | unset | Otherwise foreground at 50% opacity. |
+| `border_radius` | `12` | Corner radius, clamped to 0–100. |
+| `font` | `"SF Pro"` | Font name, `system`, or empty; fallback to system font. |
+| `font_size` | `14` | Legacy parsed compatibility field; currently does not change rendered sizes. |
+| `font_weight` | `"medium"` | Result-title weight: ultralight, thin, light, regular/normal, medium, semibold, bold, heavy, black. |
+| `blur_material` | `"hudWindow"` | `sidebar`, `popover`, `sheet`; other values use hudWindow. |
 
-| Key                 | Type   | Default       | Notes |
-| ------------------- | ------ | ------------- | ----- |
-| `name`              | string | unset         | Built-in or user theme name. When set, overrides `background` / `foreground` / `accent`. |
-| `background`        | hex    | `"#1e1e2e"`   | CSS-style. `"#00000000"` = transparent (system vibrancy only). |
-| `foreground`        | hex    | `"#cdd6f4"`   | Primary text color. |
-| `accent`            | hex    | `"#cba6f7"`   | Accent fills; default source for the selection highlight. |
-| `selection`         | hex    | unset         | Selection highlight fill. Defaults to `accent` at 25% opacity. |
-| `subtitle`          | hex    | unset         | Subtitle / secondary text. Defaults to `foreground` at 60% opacity. |
-| `border`            | hex    | unset         | Hairline window border. Off when unset. |
-| `placeholder_color` | hex    | unset         | Search-field placeholder text. Defaults to `foreground` at 50% opacity. |
-| `border_radius`     | int    | `12`          | Window corner radius in px. |
-| `font`              | string | `"SF Pro"`    | Any installed font, or `"system"`. |
-| `font_size`         | int    | `14`          | Search input font size at scale 1.0. |
-| `font_weight`       | string | `"medium"`    | Result-title weight: `light`, `regular`, `medium`, `semibold`, `bold`. |
-| `blur_material`     | string | `"hudWindow"` | One of `hudWindow`, `sidebar`, `popover`, `sheet`, `dark`, `light`. |
+The search input uses a fixed 28-point base font and shrinks to a readable
+14-point minimum for long queries. Result fonts are fixed independently of the
+legacy `font_size` field. This inherited mismatch is recorded in the baseline
+audit, not a promise that `font_size` changes the UI.
 
-The optional `selection`, `subtitle`, `border`, and `placeholder_color`
-keys all derive sensible values from the core three colors when omitted,
-so existing themes render identically without specifying them.
+Built-in names:
 
-### Built-in theme presets
+- System: `spotlight`.
+- Dark: `catppuccin-mocha`, `catppuccin-macchiato`, `catppuccin-frappe`, `nord`,
+  `dracula`, `gruvbox`, `solarized-dark`, `rose-pine`, `rose-pine-moon`,
+  `tokyo-night`, `one-dark`, `kanagawa`, `everforest`, `ayu-dark`.
+- Light: `catppuccin-latte`, `solarized-light`, `github-light`, `rose-pine-dawn`,
+  `ayu-light`, `everforest-light`.
 
-Set `name = "<preset>"` to apply one of these without specifying colors:
+Custom themes are local whitespace-separated files:
 
-- **System:** `spotlight` (transparent, system vibrancy only)
-- **Dark:** `catppuccin-mocha`, `catppuccin-macchiato`, `catppuccin-frappe`,
-  `nord`, `dracula`, `gruvbox`, `solarized-dark`, `rose-pine`,
-  `rose-pine-moon`, `tokyo-night`, `one-dark`, `kanagawa`, `everforest`,
-  `ayu-dark`
-- **Light:** `catppuccin-latte`, `solarized-light`, `rose-pine-dawn`,
-  `ayu-light`, `everforest-light`, `github-light`
-
-### Themes <a id="themes"></a>
-
-Drop a plain-text file at `~/.config/walter/themes/<name>.theme`. The
-filename (without extension) becomes the theme name. Format:
-
-```
-# my-cyberpunk.theme
-background  #0a0a23
-foreground  #00ffff
-accent      #ff00ff
-# optional — derive from the above when omitted:
-selection   #1a1a44
-subtitle    #6699aa
-border      #00ffff
+```text
+# ~/.config/walter/themes/example.theme
+background #1a1a2e
+foreground #eaeaea
+accent #ff6b6b
+selection #45475a
+subtitle #6c7086
+border #313244
 ```
 
-Core three keys are required; `selection` / `subtitle` / `border` are
-optional. Whitespace-separated, `#` comments, `bg` / `fg` aliases work.
-Saving any file in the themes directory triggers a hot-reload. Reference
-your custom theme from `[theme]` like a built-in: `name = "my-cyberpunk"`.
-
----
+Three core colors are required; optional palette colors are supported.
+`bg`/`fg` are aliases for background/foreground. Lines starting with `#` are
+comments; a hex color's `#` is data. Filenames without `.theme` are theme names.
+User themes win name collisions with built-ins. Preview does not persist;
+Return saves the selected theme, Escape cancels.
 
 ## `[layout]`
 
-Window geometry and result rendering.
+| Key | Default | Behavior |
+| --- | --- | --- |
+| `width` | `780` | Points, clamped to 320–2400 and to 95% of the pointer screen's visible width. |
+| `max_results` | `8` | 1–25 visible rows in list mode; grid also applies its own tile/row caps. |
+| `placeholder` | `"Search apps, calculate, convert..."` | Empty-query prompt. |
+| `mode` | `"list"` | `list` or `grid` (other values use list). |
 
-| Key           | Type   | Default                                      | Notes |
-| ------------- | ------ | -------------------------------------------- | ----- |
-| `width`       | int    | `780`                                        | Base width in px before `scale` is applied. |
-| `max_results` | int    | `8`                                          | Maximum visible result rows. Grid mode caps at 3 tile rows × 5 cols regardless. |
-| `position`    | string | `"center"`                                   | `center` or `top`. Center vertically or pin to top edge. |
-| `scale`       | float  | `1.0`                                        | UI scale factor — `2.0` doubles every dimension. |
-| `placeholder` | string | `"Search apps, calculate, convert..."`       | Search field placeholder text. |
-| `mode`        | string | `"list"`                                     | `list` (Alfred-style row list) or `grid` (Spotlight-Tahoe icon tiles). |
-
-### List vs grid mode
-
-- **`list`** — one row per result, icon + title + subtitle. Default.
-  Best for mixed content (calculator, conversions, system commands).
-- **`grid`** — 5-column tile sheet, large icons with a single label.
-  Caps at 3 rows = 15 tiles. Computed answers (calculator, conversions)
-  appear as a banner above the grid; the web-search fallback appears as
-  a banner below.
-
-Window position is remembered across launches and stays visually
-anchored when `scale` changes between sessions.
-
----
+Scale is fixed at its default. Position/geometry are not saved. The non-draggable
+popup is horizontally centered on the screen containing the pointer, with its
+top edge 30% down the visible area. It keeps that top anchor as results grow,
+shifting upward only when needed to stay within the visible bottom edge. It
+falls back to the main/first screen or a default rectangle when no screen is
+available. Results are height-capped to that screen.
 
 ## `[keybindings]`
 
-Global hotkeys.
+| Key | Default | Behavior |
+| --- | --- | --- |
+| `open` | `"Cmd+Space"` | Global launcher toggle, requires a modifier. |
+| `close` | `"Escape"` | Popup-local dismissal/cancel binding. Escape also remains normal cancel. |
 
-| Key     | Type   | Default       | Notes |
-| ------- | ------ | ------------- | ----- |
-| `open`  | string | `"Alt+Space"` | Toggle the launcher visibility. |
-| `close` | string | `"Escape"`    | Hide the launcher and restore focus to the previous app. |
+Modifiers: `Alt`/`Option`/`Opt`, `Cmd`/`Command`/`Super`, `Ctrl`/`Control`, `Shift`.
+Keys: A–Z, 0–9, F1–F12, Space, Tab, Return/Enter, Escape/Esc,
+Delete/Backspace, Up, Down, Left, Right. Key codes follow the macOS virtual-key
+layout. Binding names are case-insensitive; spaces surrounding `+` are ignored.
+Unknown keys, multiple keys, repeated modifiers, missing keys, and empty `+`
+components are rejected. There is no fallback from an unknown key to Space.
 
-### Syntax
+Carbon registrations work globally, including when Walter is active, without
+Accessibility or Input Monitoring access. Launcher and app shortcuts share
+registration IDs/action mappings. Duplicate names/normalized bindings (including
+launcher conflicts) are rejected. Reload stages new registrations before releasing
+old handles; failure retains the entire previous working set, including actions.
+On startup, invalid app settings do not disable the launcher: Walter attempts the
+configured launcher alone, then the default `Cmd+Space` if needed. Errors are
+shown visibly; if neither launcher can register, that failure is also reported. Cmd+Space is
+commonly assigned to Spotlight: change that shortcut yourself in System Settings
+or choose a different Walter binding. Walter does not alter system shortcuts.
+Existing config files retain their configured binding; the new default applies
+when the setting or config file is absent.
 
-`<Modifier>+<Modifier>+<Key>`. Modifiers and keys are case-insensitive.
+Other local keys: Tab/Shift+Tab and arrows navigate results, Return activates,
+Cmd+1…9 activates a numbered result, Cmd+C copies an answer/URL or revalidated
+allowed app path (selected query text copies normally). Cmd+Return reveals only
+a revalidated allowed app in Finder, never an arbitrary file. Grid horizontal
+arrows navigate tiles; on computed/web banners they retain text editing.
+There is no menu-bar or Dock icon. While the popup is active, Cmd+Q quits and
+Cmd+, shows an alert with the actual config path and explains automatic reload.
+These commands are local, not globally registered; they take precedence over a
+matching configured close binding. The alert opens neither an editor nor Finder.
+Dismissal restores input to the current popup only if it is still visible and
+Walter is active. Hidden startup and hotkey-registration error alerts remain.
 
-- **Modifiers:** `Alt` / `Option`, `Cmd` / `Command`, `Ctrl` / `Control`,
-  `Shift`. Combine with `+`.
-- **Keys:** `Space`, `Tab`, `Return`, `A`–`Z`, `0`–`9`, `F1`–`F12`,
-  `Up`, `Down`, `Left`, `Right`.
+## `[app_hotkeys]`
 
-Examples: `"Cmd+Shift+L"`, `"Ctrl+Alt+Space"`, `"F13"`.
+Optional global shortcuts to launch/activate allowed apps or hand fixed HTTP(S)
+URLs to the default browser directly, whether Walter is active or hidden. No shell,
+popup, extra dependencies, or permissions are involved. There are no shortcuts
+by default.
 
-### Accessibility permission
+```toml
+[app_hotkeys]
+"Cmd+Ctrl+t" = "/Applications/kitty.app"
+"Cmd+Ctrl+f" = "/System/Library/CoreServices/Finder.app"
+"Cmd+Ctrl+g" = "https://google.com"
+```
 
-The global hotkey requires Accessibility access — Walter prompts on
-first launch. Grant it under **System Settings → Privacy & Security →
-Accessibility**. Without it the hotkey leaks the underlying key into
-the active app instead of triggering Walter.
+Both binding keys and targets must be double-quoted (straight or matching smart
+quotes; escaping is not supported). Trailing `#` comments are allowed. Bindings
+use the same syntax as `keybindings.open` and require a modifier. Duplicate keys,
+normalized duplicates such as `Ctrl+Cmd+t`/`Command+Control+t`, and collisions with
+the launcher are errors. Popup-local commands are not global registrations.
 
-### In-launcher keys (fixed)
+URL targets must be fixed HTTP(S) URLs with a host; `{query}` templates, `file:`,
+`javascript:`, and other schemes are rejected. Validation is entirely local. Only
+pressing the hotkey asks the browser to open the URL; startup, config reload, and
+theme changes never open it or fetch anything. URLs are written directly as targets;
+a matching `[bookmarks]` entry is not required, and bookmark keywords are not
+resolved here.
 
-Beyond the configurable `open` / `close` hotkeys, these keys are fixed
-while the launcher is open:
+App targets use the same validation and launch path as search results: a real `.app`
+inside `/Applications` or `/System/Applications` (including ordinary subfolders),
+never an arbitrary file, embedded
+helper/package, outside-root app, or escaping symlink. Paths are checked on
+configuration changes and revalidated at each activation. Missing/disallowed apps
+and registration conflicts produce an alert naming the offending entry.
 
-| Key | Action |
-| --- | ------ |
-| `Enter` | Launch / open / copy the selected result |
-| `Cmd+Enter` | Reveal the selected result in Finder (apps and file-search hits; falls back to the normal action for everything else) |
-| `Cmd+1` … `Cmd+9` | Jump to and activate the Nth visible result (hint shown on each row) |
-| `Cmd+C` | Copy the selected result's value — file/app path, alias URL, shell command, or computed answer. When text is selected in the search field, defers to normal text copy. |
-| `Cmd+V` | Paste into the search field |
-| `Tab` / `Shift+Tab` | Next / previous result |
-| `↑` / `↓` | Move selection (list and grid) |
-| `←` / `→` | Move the text cursor; in grid mode, move between tiles when a tile is selected |
-| `Esc` | Close the launcher (or exit theme-preview / file mode) |
+**Finder-only exception:** app hotkeys also accept exactly
+`/System/Library/CoreServices/Finder.app`. It must be a real app with Finder's
+bundle identifier (`com.apple.finder`) and package type (`FNDR`, not the ordinary
+`APPL` type); symlinks in the path or redirected
+`Contents/Info.plist` are rejected. The target is revalidated on every press.
+This does not add Finder to search discovery or aliases, scan/watch CoreServices,
+or permit other apps under that directory. The repository example config enables
+`Cmd+Ctrl+f`; generated defaults leave it commented out, and existing personal
+config files are not rewritten.
 
----
-
-## `[general]`
-
-Miscellaneous preferences.
-
-| Key      | Type   | Default | Notes |
-| -------- | ------ | ------- | ----- |
-| `editor` | string | unset   | Path to the editor used by the **Open Config** action and `Cmd+,`. |
-
-When `editor` is unset (or points at a missing path), Walter scans for
-the first installed editor in this order:
-
-1. `/Applications/CotEditor.app`
-2. `/Applications/BBEdit.app`
-3. `/Applications/Sublime Text.app`
-4. `/Applications/Visual Studio Code.app`
-5. `/Applications/Cursor.app`
-6. `/Applications/Zed.app`
-7. `/Applications/Zed Preview.app`
-8. `/Applications/Nova.app`
-9. `/Applications/MacVim.app`
-10. `/System/Applications/TextEdit.app` (always present)
-
----
+Saving adds, changes, or removes shortcuts automatically. A bad entry rejects the
+whole hotkey update (apps and URLs together) and preserves the previously working
+set; fix the entry and save again to retry. On first load, Walter still attempts the launcher alone as
+described above. Removing the section removes all app/URL shortcuts on a successful
+reload. Unchanged shortcuts retain their registrations, including on theme saves;
+popup rebuilds/theme previews do not own them. Quitting releases all registrations.
 
 ## `[search]`
 
-Behavior of the search engine, app indexer, and trailing fallback row.
-
-| Key                    | Type   | Default    | Notes |
-| ---------------------- | ------ | ---------- | ----- |
-| `web_search`           | string | `"google"` | Web search target for the trailing fallback row. Name or URL template (see below). |
-| `show_system_commands` | bool   | `true`     | Surface Lock Screen / Sleep / Restart / etc. in results. |
-| `show_path`            | bool   | `true`     | Show file path as result subtitle. Hide for a cleaner list. |
-| `favicon_service`      | string | `"google"` | Where to fetch URL-alias favicons from (see below). |
-| `excluded_apps`        | csv    | `""`       | Comma-separated app display names to hide from the index. |
-| `app_dirs`             | csv    | `""`       | Extra directories to scan for `.app` bundles. `~` is expanded. |
-| `file_dirs`            | csv    | unset (= disabled)                    | Directories indexed for prefix-triggered file search. Fresh installs get `~/Documents, ~/Desktop, ~/Downloads` in the generated config. |
-| `file_prefix`          | string | `` "`" ``                             | Single character that activates file-search mode when typed first. |
-
-### `web_search`
-
-Built-in shorthands: `"google"`, `"duckduckgo"` (or `"ddg"`), `"bing"`.
-
-For anything else, pass a URL template containing `{query}` where the
-search term should land. Walter URL-encodes the query before substitution:
+| Key | Default | Behavior |
+| --- | --- | --- |
+| `web_search` | `"google"` | `google`, `duckduckgo`/`ddg`, `bing`, or an HTTP(S) URL template containing `{query}`. |
+| `show_path` | `true` | Show an app's path in its result subtitle. |
+| `excluded_apps` | empty | Comma-separated display names, case-insensitive. |
 
 ```toml
+[search]
 web_search = "https://kagi.com/search?q={query}"
-web_search = "https://html.duckduckgo.com/html/?q={query}"
-web_search = "https://you.com/search?q={query}"
+show_path = true
+excluded_apps = Example, Another App
 ```
 
-The trailing fallback row reads "Search <name> for …" — for URL
-templates the host name is shown.
+Web search is the fallback. Query substitution is percent-encoded (including
+parameter separators such as `&`); there are no suggestions, prefetches, URL
+checks over the network, or remote icons. Invalid custom templates use the
+local Google fallback. Only activation asks the browser to open the URL.
 
-### `favicon_service`
+App discovery is fixed to `/Applications` and `/System/Applications`, including
+ordinary subfolders (such as system Utilities) but excluding embedded apps/helpers
+and other package contents. Both roots are indexed and watched for changes.
+Both lexical and resolved paths must remain under the originating root;
+`/Applications-other` is not inside. Internal symlinks are deduplicated; symlinks
+leaving their root are excluded, even if they point into the other allowed root.
+Activation revalidates so a stale/changed index cannot open an arbitrary path.
+`~/Applications`, other `/System` paths, and arbitrary additional roots remain
+unsupported; no configurable app-root setting is introduced.
 
-URL-alias rows show the target site's favicon. Walter caches images on
-disk under `~/.config/walter/.cache/favicons/` and refetches them when
-the service is changed.
+## `[bookmarks]`
 
-Built-in shorthands:
-
-- `"google"` — Google S2 at 128px. Highest resolution, recommended.
-- `"duckduckgo"` (or `"ddg"`) — DuckDuckGo's icon service, 32px.
-  Lower resolution but does not phone the user's alias hosts to Google.
-- `"iconhorse"` — icon.horse. Returns the site's largest published icon.
-
-Custom templates use `{host}`:
+Optional keyword → fixed HTTP(S) URL pairs. There are no bookmarks by default.
 
 ```toml
-favicon_service = "https://api.faviconkit.com/{host}/144"
+[bookmarks]
+"google" = "https://google.com"
+"docs" = "https://example.com/docs#start"
 ```
 
-### `excluded_apps`
+Both keys and values must be double-quoted (straight or matching smart quotes);
+trailing `#` comments are allowed. Keywords are trimmed and normalized to lowercase,
+then fuzzy-matched case-insensitively alongside apps and aliases. Duplicate
+normalized keywords use the last value. Bookmarks and aliases remain separate;
+using the same keyword in both can show both results.
 
-Hide an indexed app from search by adding its display name (case-insensitive):
-
-```toml
-excluded_apps = Siri, News, Stocks
-```
-
-For internal helper bundles that show up despite Walter's filters
-(rare), this is the escape hatch.
-
-### `app_dirs`
-
-Extra directories to scan in addition to `/Applications`,
-`/Applications/Utilities`, `/System/Applications`,
-`/System/Applications/Utilities`, `/System/Library/CoreServices`,
-`/System/Library/CoreServices/Applications`, `~/Applications`, and
-`/Applications/MacPorts`.
-
-```toml
-app_dirs = /opt/myapps, ~/Tools
-```
-
-Newly added directories are watched live — adding or removing a `.app`
-fires Walter's reindex within a second.
-
-### `file_dirs`
-
-Directories indexed for **prefix-triggered file search**. Type
-`` `<query> `` (with a leading backtick) to search filenames in these
-directories only. Outside of prefix mode the file index is invisible,
-so apps stay the first-class result type and never get pushed down by
-document hits. The prefix character is configurable via `file_prefix`.
-
-```toml
-file_dirs = ~/Documents, ~/Desktop, ~/Downloads
-```
-
-When Walter creates a config file for the first time, the three
-user-content folders above are pre-filled — but if the key is absent
-from your config, file search is **disabled**. Walter never indexes
-disk content you didn't ask it to. Upgrading the app never silently
-expands the index.
-
-**Skip rules** — Walter never recurses into these subdirectory names:
-`.git`, `.svn`, `.hg`, `node_modules`, `.build`, `build`, `dist`,
-`target`, `Pods`, `.bundle`, `.cache`, `Library`. macOS bundle types
-(`.app`, `.bundle`, `.framework`, `.kext`, `.plugin`, `.appex`,
-`.rtfd`, `.photoslibrary`, `.musiclibrary`, `.tvlibrary`,
-`.fcpbundle`, `.logicx`, `.garageband`) are treated as opaque leaves
-so the user can find them by name without flooding the index with
-their internals.
-
-Hidden files (anything starting with `.`) are skipped. The whole index
-is hard-capped at 50,000 entries; if you trip it Walter logs a warning
-and you should narrow `file_dirs`. Listing `~/Code` or `~/` will hit
-the cap quickly — point Walter at user-content folders instead.
-
-Files are watched via FSEvents, so creating, deleting, or renaming a
-file in any indexed directory updates Walter's catalog within ~2
-seconds.
-
-### `file_prefix`
-
-Single character that activates file-search mode. Default is `` ` ``
-(backtick). Pick any character you don't normally type at the start
-of a query — apostrophe (`'`), colon (`:`), and slash (`/`) are
-common alternatives.
-
-```toml
-file_prefix = "/"
-```
-
-If `file_dirs` is empty, hitting the prefix surfaces a one-row
-shortcut that opens `config.toml` in your editor so you can fill in
-the directories without leaving the launcher.
-
----
+Results show the keyword with a shared, locally prepared bookmark symbol in list
+and grid layouts; list subtitles show the URL. Only activation hands the URL to
+the default browser. No favicons, previews, network validation, or per-keystroke
+image preparation occur. Empty keywords, non-HTTP(S) targets, app/file paths,
+commands, and `{query}` templates are ignored (use `[aliases]` for templates).
+Saving adds, changes, or removes bookmarks through the existing local hot reload,
+without revealing a hidden popup. Existing aliases are unchanged.
 
 ## `[aliases]`
 
-User-defined shortcuts. Type the alias key in the launcher to fire it.
-
-Values can be:
-
-- **URL** (`http://…`, `https://…`) — opened in the default browser.
-- **App / file path** — opened via `NSWorkspace`.
-- **Shell command** — prefix with `!` to run via `/bin/sh -c`.
-
-Add `{query}` anywhere in the value to make the alias parameterized:
+Only HTTP(S) URLs and real allowed apps are accepted. Plain app aliases must
+resolve to an `.app` bundle with `CFBundlePackageType = APPL` inside
+`/Applications` or `/System/Applications`, not inside another package.
+Arbitrary files/directories,
+`file:` URLs, other schemes, parameterized app paths, and legacy `!` commands
+(including leading-whitespace variants) are rejected, not reinterpreted.
 
 ```toml
 [aliases]
-ip = "!curl -s ifconfig.me"
-y  = "https://www.youtube.com/results?search_query={query}"
-gh-s = "https://github.com/search?q={query}"
-```
+gh = "https://github.com"
+example = "/Applications/Example.app"
+calculator = "/System/Applications/Calculator.app"
 
-Then type `y cat videos` — Walter substitutes `cat videos` for `{query}`,
-URL-encodes it for URL aliases, and fires. Shell aliases receive the
-text raw (so the alias author handles their own quoting).
-
-When a parameterized alias matches, Walter suppresses fuzzy app/pane
-matches for the same query — the user's intent is explicit. The
-trailing web-search fallback still shows so escape is always one click
-away.
-
-### Display names (sub-table form)
-
-The flat `key = "value"` form uses the key as the displayed result title.
-For nicer labels, use the sub-table form:
-
-```toml
 [aliases.y]
 name = "YouTube"
-url  = "https://www.youtube.com/results?search_query={query}"
-
-[aliases.gh-s]
-name = "GitHub Search"
-url  = "https://github.com/search?q={query}"
-
-[aliases.?]
-name = "Ask Claude"
-url  = "https://claude.ai/new?q={query}"
+url = "https://www.youtube.com/results?search_query={query}"
 ```
 
-The accepted value keys are `url`, `value`, `path`, and `cmd` — they all
-populate the alias's value. `name` is always the optional display label.
+The key is fuzzy-matched. A URL template triggers on `<key> <text>`; encoded text
+replaces `{query}` and suppresses unrelated fuzzy results. Web fallback remains.
+URL aliases use the generic link icon; indexed apps retain native icons.
+`name` is an optional display label; sub-table value keys are `url`, `value`,
+and `path` (all subject to the same validation). Legacy `cmd` is ignored.
 
-Result rows then read **"YouTube → cat videos"** instead of
-**"y → cat videos"**.
+## Removed settings and legacy data
 
----
-
-## File locations
-
-| Path                                         | Purpose |
-| -------------------------------------------- | ------- |
-| `~/.config/walter/config.toml`               | Main config (this file). |
-| `~/.config/walter/themes/`                   | User-defined `*.theme` files. Auto-created with example. |
-| `~/.config/walter/.cache/favicons/`          | Cached favicons. Wiped automatically on `favicon_service` change. |
-| `~/.config/walter/frecency.json`             | App launch counts + last-launched timestamps. Affects ranking. |
-
-To start fresh, delete `~/.config/walter/` — the next launch recreates
-defaults.
+`layout.position`, `layout.scale`, `search.favicon_service`,
+`search.show_system_commands`, `search.app_dirs`, `search.file_dirs`,
+`search.file_prefix`, and `general.editor` have no effect. Walter does not
+access legacy history/frecency JSON, favicon caches, or saved preferences.
+It does not delete those files, clear permission grants, or unregister old
+login items automatically. See [optional user cleanup](uninstall.md).

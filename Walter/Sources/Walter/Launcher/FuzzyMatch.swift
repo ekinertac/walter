@@ -45,12 +45,8 @@ func fuzzyMatch(query: String, target: String) -> FuzzyResult {
     }
 
     // Bonus: the entire query is a contiguous prefix of the target
-    // ("to" -> "Tolaria"). This is by far the strongest user signal —
-    // somebody typing the first letters of an app name almost always
-    // wants that exact app, even when a heavily-used app contains the
-    // same letters scattered (e.g. "to" -> "Stremio"). Big enough to
-    // beat the frecency boost on long-tail apps without overwhelming
-    // genuine ties.
+    // ("to" -> "Tolaria"). A clean prefix should outrank scattered matches.
+    // Ranking uses only the current query and candidate name, never usage.
     let qLower = query.lowercased()
     let tLower = target.lowercased()
     if tLower.hasPrefix(qLower) {

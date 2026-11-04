@@ -1,585 +1,352 @@
-// ConfigManager.swift — TOML config with FSEvents hot-reload
-//
-// Reads ~/.config/walter/config.toml, creates it on first run,
-// watches for changes, and re-parses + fires onChange on save.
-
+// Local TOML-subset config and themes. No preferences or legacy data access.
 import Foundation
 
-class ConfigManager {
-
+final class ConfigManager {
     struct Theme {
-        var name: String?                       // built-in theme name (overrides individual colors)
-        var background: String = "#1e1e2e"
-        var foreground: String = "#cdd6f4"
-        var accent: String = "#cba6f7"
-        // Optional palette extensions. nil = derive from the core three
-        // colors exactly as before, so existing themes look identical.
-        var selection: String?                  // selection highlight; default accent @ 0.25
-        var subtitle: String?                   // subtitle text; default foreground @ 0.6
-        var border: String?                     // window edge; default none
-        var placeholderColor: String?           // search placeholder; default foreground @ 0.5
-        var borderRadius: Float = 12.0
-        var font: String = "SF Pro"
-        var fontSize: Int = 14
-        var fontWeight: String = "medium"        // result title weight: light|regular|medium|semibold|bold
-        var blurMaterial: String = "hudWindow"   // hudWindow | sidebar | popover | sheet | dark | light
+        var name: String?
+        var background = "#1e1e2e"
+        var foreground = "#cdd6f4"
+        var accent = "#cba6f7"
+        var selection: String?
+        var subtitle: String?
+        var border: String?
+        var placeholderColor: String?
+        var borderRadius: Float = 12
+        var font = "SF Pro"
+        var fontSize = 14
+        var fontWeight = "medium"
+        var blurMaterial = "hudWindow"
     }
-
     struct Layout {
-        var width: Int = 780
-        var maxResults: Int = 8
-        var position: String = "center"
-        var scale: Float = 1.0
-        var placeholder: String = "Search apps, calculate, convert..."
-        var mode: String = "list"     // "list" (Alfred-style) | "grid" (Spotlight-Tahoe-style)
+        var width = 780
+        var maxResults = 8
+        var placeholder = "Search apps, calculate, convert..."
+        var mode = "list"
     }
-
     struct Keybindings {
-        var open: String = "Alt+Space"
-        var close: String = "Escape"
+        var open = "Cmd+Space"
+        var close = "Escape"
     }
-
     struct Search {
-        /// URL template (or named shorthand) used by the trailing
-        /// web-search fallback row. Named `webSearch` rather than
-        /// `engine` because the `[search]` section also configures
-        /// app indexing and file indexing — `engine` was ambiguous.
-        var webSearch: String = "google"
-        var showSystemCommands: Bool = true
-        var showPath: Bool = true
+        var webSearch = "google"
+        var showPath = true
         var excludedApps: [String] = []
-        var extraAppDirs: [String] = []
-        /// Where to fetch URL-alias favicons from. Either a known shorthand
-        /// (`google` / `duckduckgo` / `iconhorse`) or a full URL template
-        /// containing `{host}`. Defaults to Google's S2 service at 128px,
-        /// which is by far the highest-resolution free option.
-        var faviconService: String = "google"
-        /// Directories indexed for prefix-triggered file search (e.g. ``foo``).
-        /// Empty disables file search entirely. The defaults live in the
-        /// generated config file, NOT here — Walter must never start
-        /// indexing a user's disk unless they've consented by listing the
-        /// directories explicitly in `~/.config/walter/config.toml`. That
-        /// way upgrading the app on an existing install never silently
-        /// expands what Walter is allowed to read.
-        var fileDirs: [String] = []
-        /// Single character that activates file-search mode when typed at
-        /// the start of the query. Defaults to backtick because it's easy
-        /// to reach on US/UK layouts and isn't shadowed by anything else
-        /// in the launcher's input vocabulary.
-        var filePrefix: String = "`"
     }
 
-    struct General {
-        var editor: String = ""                 // path to preferred text editor, empty = auto-detect
+    struct AppHotkey: Equatable {
+        let binding: String
+        let path: String
     }
+    // Keep entries, rather than a dictionary, so duplicate keys cannot disappear.
+    private(set) var appHotkeys: [AppHotkey] = []
+    private(set) var appHotkeyErrors: [String] = []
 
     var theme = Theme()
     var layout = Layout()
     var keybindings = Keybindings()
-    var general = General()
     var search = Search()
+    private(set) var bookmarks: [String: String] = [:]
     var aliases: [String: String] = [:]
-    var aliasNames: [String: String] = [:]   // optional display name per alias key
-    var userThemes: [String: ThemePreset] = [:]   // loaded from ~/.config/walter/themes/*.theme
-
-    /// Built-in + user themes, with user winning on name collision.
-    var allThemes: [String: ThemePreset] {
-        var merged = builtinThemes
-        for (k, v) in userThemes { merged[k] = v }
-        return merged
-    }
-
+    var aliasNames: [String: String] = [:]
+    var userThemes: [String: ThemePreset] = [:]
+    var allThemes: [String: ThemePreset] { builtinThemes.merging(userThemes) { _, user in user } }
     var onChange: (() -> Void)?
-    private var fileMonitor: DispatchSourceFileSystemObject?
-    private var themesMonitor: DispatchSourceFileSystemObject?
+    let configURL: URL
+    var userThemesDir: URL { configURL.deletingLastPathComponent().appendingPathComponent("themes") }
+    private let apps: AllowedApps
+    private var monitors: [DispatchSourceFileSystemObject] = []
+    private var pendingReload: DispatchWorkItem?
+    private var watching = false
 
-    func s(_ base: CGFloat) -> CGFloat {
-        base * CGFloat(layout.scale)
-    }
+    // Fixed default sizing; no configurable scale or persisted geometry.
+    func s(_ base: CGFloat) -> CGFloat { base }
 
-    init() {
+    init(configURL: URL? = nil, watchForChanges: Bool = true, apps: AllowedApps = AllowedApps()) {
+        self.configURL = configURL ?? ProcessInfo.processInfo.environment["WALTER_CONFIG"].map { URL(fileURLWithPath: $0) }
+            ?? FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(".config/walter/config.toml")
+        self.apps = apps
         ensureConfigExists()
         ensureUserThemesDirExists()
         load()
-        startWatching()
-        startWatchingThemes()
+        if watchForChanges { startWatching() }
     }
 
-    deinit {
-        stopWatching()
-        stopWatchingThemes()
-    }
-
-    var configURL: URL {
-        if let env = ProcessInfo.processInfo.environment["WALTER_CONFIG"] {
-            return URL(fileURLWithPath: env)
-        }
-        return FileManager.default.homeDirectoryForCurrentUser
-            .appendingPathComponent(".config/walter/config.toml")
-    }
-
-    /// Directory containing user-defined `*.theme` files.
-    var userThemesDir: URL {
-        configURL.deletingLastPathComponent().appendingPathComponent("themes")
-    }
+    deinit { stopWatching() }
 
     func reload() {
-        theme = Theme()
-        layout = Layout()
-        keybindings = Keybindings()
-        general = General()
-        search = Search()
-        aliases = [:]
-        aliasNames = [:]
-        userThemes = [:]
+        theme = Theme(); layout = Layout(); keybindings = Keybindings(); search = Search()
+        bookmarks = [:]; aliases = [:]; aliasNames = [:]; userThemes = [:]
+        appHotkeys = []; appHotkeyErrors = []
         load()
-        print("Config hot-reloaded")
-        DispatchQueue.main.async { [weak self] in self?.onChange?() }
+        onChange?()
     }
 
-    // MARK: - First-run default config
+    // Pure preliminary guard. App existence and resolved boundaries are checked
+    // during config loading and again at activation, not on each keystroke.
+    static func isAllowedAliasValue(_ value: String, appRoots: [String] = AllowedApps.defaultRootPaths) -> Bool {
+        guard !value.trimmingCharacters(in: .whitespacesAndNewlines).hasPrefix("!") else { return false }
+        if value.contains("{query}") {
+            return BrowserURL.parse(value.replacingOccurrences(of: "{query}", with: "x")) != nil
+        }
+        return BrowserURL.parse(value) != nil ||
+            (appRoots.contains { value.hasPrefix($0 + "/") } && value.lowercased().hasSuffix(".app") && !value.contains("/../"))
+    }
+
+    private func storeAlias(_ key: String, _ value: String) {
+        let browser = BrowserURL.parse(value.replacingOccurrences(of: "{query}", with: "x")) != nil
+        if !value.trimmingCharacters(in: .whitespacesAndNewlines).hasPrefix("!"), browser {
+            aliases[key.lowercased()] = value
+        } else if !value.contains("{query}"), let url = apps.validatedURL(for: value) {
+            aliases[key.lowercased()] = url.path
+        } else {
+            aliases.removeValue(forKey: key.lowercased())
+        }
+    }
 
     private func ensureConfigExists() {
-        let url = configURL
-        guard !FileManager.default.fileExists(atPath: url.path) else { return }
-
-        let dir = url.deletingLastPathComponent()
-        try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
-
-        let defaults = """
-# Walter configuration — reference file
-#
-# Changes apply live — just save. Comments start with '#'.
-# Full docs: https://github.com/ekinertac/walter/blob/master/docs/config.md
-#
-# Sections (in order below):
-#   [theme]        — colors, fonts, blur, corner radius
-#   [layout]       — window size, position, scale, list-vs-grid mode
-#   [keybindings]  — global hotkey + close key
-#   [general]      — preferred text editor for "Open Config"
-#   [search]       — web engine, favicon service, indexed app dirs
-#   [aliases]      — user shortcuts, plain or parameterized
-
-# ---------------------------------------------------------------------------
-# Theme
-# ---------------------------------------------------------------------------
-# Built-in presets (set `name` to one of these to apply them):
-#   spotlight (transparent, system vibrancy only)
-#   Dark   — catppuccin-mocha, catppuccin-macchiato, catppuccin-frappe,
-#            nord, dracula, gruvbox, solarized-dark, rose-pine,
-#            rose-pine-moon, tokyo-night, one-dark, kanagawa,
-#            everforest, ayu-dark
-#   Light  — catppuccin-latte, solarized-light, rose-pine-dawn,
-#            ayu-light, everforest-light, github-light
-# Custom themes: drop a *.theme file under ~/.config/walter/themes/
-# (auto-created with example.theme on first run) and reference it by
-# filename (without extension) here.
-[theme]
-# name        = "catppuccin-mocha"   # presets override the colors below
-background    = "#1e1e2e"            # CSS-style hex; "#00000000" = transparent
-foreground    = "#cdd6f4"
-accent        = "#cba6f7"
-# Optional palette extensions — all derive from the three colors above
-# when unset, so leaving them out keeps the current look:
-# selection         = "#45475a"      # selection highlight  (default: accent @ 25%)
-# subtitle          = "#6c7086"      # subtitle text color  (default: foreground @ 60%)
-# border            = "#313244"      # window edge          (default: none)
-# placeholder_color = "#6c7086"      # search placeholder   (default: foreground @ 50%)
-border_radius = 12                   # window corner radius in px
-font          = "SF Pro"             # any installed font name, or "system"
-font_size     = 14
-# font_weight accepts: light | regular | medium | semibold | bold (result titles)
-font_weight   = "medium"
-# blur_material accepts: hudWindow | sidebar | popover | sheet | dark | light
-blur_material = "hudWindow"
-
-# ---------------------------------------------------------------------------
-# Layout
-# ---------------------------------------------------------------------------
-[layout]
-width       = 780                    # base width in pixels (before scaling)
-max_results = 8                      # max visible result rows
-position    = "center"               # center | top
-scale       = 1.0                    # UI scale: 1.0 = default, 2.0 = double
-placeholder = "Search apps, calculate, convert..."
-# mode picks the result renderer:
-#   list — Alfred/Raycast-style row list (default)
-#   grid — Spotlight-Tahoe-style icon tiles (5 cols × 3 rows)
-mode        = "list"
-
-# ---------------------------------------------------------------------------
-# Keybindings
-# ---------------------------------------------------------------------------
-# Modifiers: Alt/Option, Cmd/Command, Ctrl/Control, Shift
-# Keys:      Space, Tab, Return, A-Z, 0-9, F1-F12, Up, Down, Left, Right
-[keybindings]
-open  = "Alt+Space"                  # global toggle
-close = "Escape"                     # close (also unfocuses to previous app)
-
-# ---------------------------------------------------------------------------
-# General
-# ---------------------------------------------------------------------------
-# Preferred text editor for the "Open Config" action and Cmd+,.
-# Leave empty to auto-detect — Walter checks (in order):
-#   CotEditor, BBEdit, Sublime Text, VS Code, Cursor, Zed,
-#   Zed Preview, Nova, MacVim, then TextEdit as a last resort.
-[general]
-# editor = "/Applications/CotEditor.app"
-
-# ---------------------------------------------------------------------------
-# Search
-# ---------------------------------------------------------------------------
-[search]
-# Web search for the trailing fallback row. Either a built-in name
-# (google | duckduckgo | bing) or a full URL template containing {query}:
-#   web_search = "https://kagi.com/search?q={query}"
-#   web_search = "https://html.duckduckgo.com/html/?q={query}"
-#   web_search = "https://you.com/search?q={query}"
-web_search           = "google"
-
-show_system_commands = true          # Lock Screen, Sleep, Restart, ...
-show_path            = true          # show file path in result subtitle
-
-# Favicon service for URL aliases. Either a built-in shorthand or a URL
-# template containing {host}:
-#   "google"     — Google S2, up to 128px (best quality, default)
-#   "duckduckgo" — DDG icon service, 32px (privacy-friendlier, low-res)
-#   "iconhorse"  — icon.horse, returns site's largest icon
-#   "https://api.faviconkit.com/{host}/144"   # custom template
-# favicon_service     = "google"
-
-# Hide specific apps from the index (comma-separated, name as displayed):
-# excluded_apps      = Siri, News, Stocks
-
-# Extra directories to scan for .app bundles (comma-separated):
-# app_dirs           = /opt/myapps, ~/Tools
-
-# Directories indexed for prefix-triggered file search. Type `<prefix>foo`
-# to search filenames in these dirs only — outside of prefix mode the
-# file index is invisible so apps stay first-class. Set `file_dirs = `
-# (empty) to disable file search entirely.
-file_dirs            = ~/Documents, ~/Desktop, ~/Downloads
-# Single character that activates file-search mode (default: backtick).
-# Pick something you don't normally type at the start of a query.
-# file_prefix        = "`"
-
-# ---------------------------------------------------------------------------
-# Aliases
-# ---------------------------------------------------------------------------
-# Type the key to fire the value. Values can be:
-#   - URLs        ("https://...")     — opened in default browser
-#   - App / file  ("/Applications/..., /Users/...")   — opened via NSWorkspace
-#   - Shell cmd   ("!curl -s example.com")            — run via /bin/sh -c
-#
-# Add {query} anywhere in the value to make the alias parameterized.
-# Type "<key> <text>" and <text> is substituted before firing. URL
-# aliases URL-encode the query; shell aliases pass it through raw.
-#
-# Flat form — alias key is the display name:
-[aliases]
-# gh    = "https://github.com"
-# mail  = "/System/Applications/Mail.app"
-# ip    = "!curl -s ifconfig.me"
-
-# Sub-table form — adds a friendly display name. The launcher UI reads
-# "YouTube → cat videos" instead of just "y → cat videos".
-# [aliases.y]
-# name = "YouTube"
-# url  = "https://www.youtube.com/results?search_query={query}"
-#
-# [aliases.gh-s]
-# name = "GitHub Search"
-# url  = "https://github.com/search?q={query}"
-#
-# [aliases.?]
-# name = "Ask Claude"
-# url  = "https://claude.ai/new?q={query}"
-"""
-
-        try? defaults.write(to: url, atomically: true, encoding: .utf8)
-        print("Created default config at \(url.path)")
+        guard !FileManager.default.fileExists(atPath: configURL.path) else { return }
+        try? FileManager.default.createDirectory(at: configURL.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try? Self.defaultConfig.write(to: configURL, atomically: true, encoding: .utf8)
     }
 
-    /// Creates ~/.config/walter/themes/ on first run and seeds it with a
-    /// commented example file so users have something to copy from.
+    static let defaultConfig = """
+    # Walter — local configuration. Changes apply live on save.
+    # Unknown/removed keys are ignored. No history, caches, or preferences.
+    [theme]
+    # name = "catppuccin-mocha"
+    background = "#1e1e2e"
+    foreground = "#cdd6f4"
+    accent = "#cba6f7"
+    # selection = "#45475a"
+    # subtitle = "#6c7086"
+    # border = "#313244"
+    # placeholder_color = "#6c7086"
+    border_radius = 12
+    font = "SF Pro"
+    font_size = 14
+    font_weight = "medium"
+    blur_material = "hudWindow"
+
+    [layout]
+    width = 780
+    max_results = 8
+    placeholder = "Search apps, calculate, convert..."
+    mode = "list" # list | grid
+
+    [keybindings]
+    open = "Cmd+Space"
+    close = "Escape"
+
+    # Global shortcuts: allowed apps (including the exact Finder path) or fixed HTTP(S) URLs.
+    [app_hotkeys]
+    # "Cmd+Ctrl+t" = "/Applications/kitty.app"
+    # "Cmd+Ctrl+f" = "/System/Library/CoreServices/Finder.app"
+    # "Cmd+Ctrl+g" = "https://google.com"
+
+    [search]
+    web_search = "google" # google | duckduckgo | bing | https://...{query}...
+    show_path = true
+    # excluded_apps = Example, Another App
+
+    # Bookmark keywords are fuzzy-matched; only fixed HTTP(S) URLs are accepted.
+    [bookmarks]
+    # "google" = "https://google.com"
+
+    # Only HTTP(S) URLs or real apps resolved inside /Applications or /System/Applications.
+    # Commands (!), arbitrary paths, and parameterized app paths are rejected.
+    [aliases]
+    # gh = "https://github.com"
+    # example = "/Applications/Example.app"
+
+    # Optional display name and URL template. Arguments are URL-encoded.
+    # [aliases.y]
+    # name = "YouTube"
+    # url = "https://www.youtube.com/results?search_query={query}"
+    """
+
     private func ensureUserThemesDirExists() {
-        let dir = userThemesDir
-        let fm = FileManager.default
-        try? fm.createDirectory(at: dir, withIntermediateDirectories: true)
-
-        let example = dir.appendingPathComponent("example.theme")
-        guard !fm.fileExists(atPath: example.path) else { return }
-
-        let body = """
-        # example.theme — sample custom theme for Walter
-        #
-        # Drop more *.theme files in this directory to add themes.
-        # The filename (without extension) is the theme's name; reference
-        # it from config.toml with `name = "example"` under [theme].
-        #
-        # Each theme needs three keys: background, foreground, accent.
-        # Values are CSS-style hex colors. Aliases `bg` / `fg` also work.
-        # Lines starting with `#` are comments.
-
-        background  #1a1a2e
-        foreground  #eaeaea
-        accent      #ff6b6b
-        """
-        try? body.write(to: example, atomically: true, encoding: .utf8)
-        print("Seeded user themes dir at \(dir.path)")
+        try? FileManager.default.createDirectory(at: userThemesDir, withIntermediateDirectories: true)
+        let example = userThemesDir.appendingPathComponent("example.theme")
+        guard !FileManager.default.fileExists(atPath: example.path) else { return }
+        try? """
+        # Custom theme. Filename is its theme name; lines beginning # are comments.
+        background #1a1a2e
+        foreground #eaeaea
+        accent #ff6b6b
+        """.write(to: example, atomically: true, encoding: .utf8)
     }
-
-    // MARK: - TOML parser
 
     private func load() {
-        // Pick up any user-defined themes before parsing config so that
-        // `name = "..."` lookups resolve against the merged map.
         userThemes = loadUserThemes(from: userThemesDir)
-
-        guard FileManager.default.fileExists(atPath: configURL.path),
-              let content = try? String(contentsOf: configURL, encoding: .utf8) else {
-            print("Config not found or unreadable, using defaults")
-            return
-        }
-
-        var currentSection = ""
-        // When inside an `[aliases.<key>]` subsection, this holds <key> so
-        // we know which alias the contained `name`/`url` keys belong to.
-        var currentAliasKey: String? = nil
-
+        guard let content = try? String(contentsOf: configURL, encoding: .utf8) else { return }
+        var section = ""
+        var aliasKey: String?
         for line in content.components(separatedBy: .newlines) {
             let trimmed = line.trimmingCharacters(in: .whitespaces)
             if trimmed.isEmpty || trimmed.hasPrefix("#") { continue }
-
-            if trimmed.hasPrefix("[") && trimmed.hasSuffix("]") {
-                let raw = String(trimmed.dropFirst().dropLast())
-                if raw.hasPrefix("aliases.") {
-                    // Sub-table form: `[aliases.foo]` declares alias key `foo`
-                    // and switches to a section that accepts `name = ...`
-                    // and `url = ...` (or the legacy `value`/`path`/`cmd`).
-                    currentSection = "alias_subtable"
-                    currentAliasKey = String(raw.dropFirst("aliases.".count))
-                } else {
-                    currentSection = raw
-                    currentAliasKey = nil
+            if trimmed.hasPrefix("["), trimmed.hasSuffix("]") {
+                section = String(trimmed.dropFirst().dropLast())
+                aliasKey = section.hasPrefix("aliases.") ? String(section.dropFirst(8)).lowercased() : nil
+                continue
+            }
+            if section == "app_hotkeys" {
+                if let entry = Self.parseQuotedAssignment(trimmed) {
+                    appHotkeys.append(AppHotkey(binding: entry.key, path: entry.value))
+                } else { appHotkeyErrors.append("Invalid [app_hotkeys] entry: \(trimmed). Use \"Cmd+Ctrl+t\" = \"/Applications/kitty.app\".") }
+                continue
+            }
+            if section == "bookmarks" {
+                if let entry = Self.parseQuotedAssignment(trimmed) {
+                    let key = entry.key.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+                    guard !key.isEmpty else { continue }
+                    if !entry.value.contains("{query}"), BrowserURL.parse(entry.value) != nil {
+                        bookmarks[key] = entry.value
+                    } else {
+                        bookmarks.removeValue(forKey: key)
+                    }
                 }
                 continue
             }
-
             let parts = trimmed.split(separator: "=", maxSplits: 1)
             guard parts.count == 2 else { continue }
             let key = parts[0].trimmingCharacters(in: .whitespaces)
             var raw = parts[1].trimmingCharacters(in: .whitespaces)
-
-            // Accept curly double quotes as well as straight ones. Editors
-            // with smart-quote substitution on (CotEditor, TextEdit, etc.)
-            // silently turn `"grid"` into `“grid”`, which would otherwise
-            // never match anything and look like a Walter bug.
-            let doubleQuotes: Set<Character> = ["\"", "\u{201C}", "\u{201D}"]
-
-            // Strip inline comments. For quoted values the `#` itself may be
-            // legal inside the string (e.g. hex colors), so we anchor on the
-            // closing quote instead: everything after it is comment-territory
-            // and gets dropped. Without this, a line like
-            //     mode = "grid" # grid|list
-            // parses as `grid" # grid|list`, which silently mismatches every
-            // mode comparison and looks like a bug at the call site.
-            if let first = raw.first, doubleQuotes.contains(first) {
-                if let closeIdx = raw.dropFirst().firstIndex(where: { doubleQuotes.contains($0) }) {
-                    raw = String(raw[...closeIdx])
-                }
-            } else if let commentIdx = raw.firstIndex(of: "#") {
-                raw = String(raw[..<commentIdx]).trimmingCharacters(in: .whitespaces)
+            let quotes: Set<Character> = ["\"", "\u{201C}", "\u{201D}"]
+            if let first = raw.first, quotes.contains(first) {
+                if let close = raw.dropFirst().firstIndex(where: { quotes.contains($0) }) { raw = String(raw[...close]) }
+            } else if let comment = raw.firstIndex(of: "#") {
+                raw = String(raw[..<comment]).trimmingCharacters(in: .whitespaces)
             }
             let value = raw.trimmingCharacters(in: CharacterSet(charactersIn: "\"\u{201C}\u{201D}"))
-
-            switch (currentSection, key) {
-            // Theme
-            case ("theme", "name"):          theme.name = value
-            case ("theme", "background"):    theme.background = value
-            case ("theme", "foreground"):    theme.foreground = value
-            case ("theme", "accent"):        theme.accent = value
-            case ("theme", "selection"):     theme.selection = value
-            case ("theme", "subtitle"):      theme.subtitle = value
-            case ("theme", "border"):        theme.border = value
+            if let aliasKey {
+                if key == "name" { aliasNames[aliasKey] = value }
+                else if ["url", "value", "path"].contains(key) { storeAlias(aliasKey, value) }
+                continue
+            }
+            if section == "aliases" { storeAlias(key, value); continue }
+            switch (section, key) {
+            case ("theme", "name"): theme.name = value
+            case ("theme", "background"): theme.background = value
+            case ("theme", "foreground"): theme.foreground = value
+            case ("theme", "accent"): theme.accent = value
+            case ("theme", "selection"): theme.selection = value
+            case ("theme", "subtitle"): theme.subtitle = value
+            case ("theme", "border"): theme.border = value
             case ("theme", "placeholder_color"): theme.placeholderColor = value
-            case ("theme", "border_radius"): theme.borderRadius = Float(value) ?? theme.borderRadius
-            case ("theme", "font"):          theme.font = value
-            case ("theme", "font_size"):     theme.fontSize = Int(value) ?? theme.fontSize
-            case ("theme", "font_weight"):   theme.fontWeight = value
+            case ("theme", "border_radius"): if let n = Float(value), n.isFinite { theme.borderRadius = min(100, max(0, n)) }
+            case ("theme", "font"): theme.font = value
+            case ("theme", "font_size"): theme.fontSize = min(72, max(8, Int(value) ?? 14))
+            case ("theme", "font_weight"): theme.fontWeight = value
             case ("theme", "blur_material"): theme.blurMaterial = value
-            // Layout
-            case ("layout", "width"):        layout.width = Int(value) ?? layout.width
-            case ("layout", "max_results"):  layout.maxResults = Int(value) ?? layout.maxResults
-            case ("layout", "position"):     layout.position = value
-            case ("layout", "scale"):        layout.scale = Float(value) ?? layout.scale
-            case ("layout", "placeholder"):  layout.placeholder = value
-            case ("layout", "mode"):         layout.mode = value
-            // Keybindings
-            case ("keybindings", "open"):    keybindings.open = value
-            case ("keybindings", "close"):   keybindings.close = value
-            // Search
-            // General
-            case ("general", "editor"):      general.editor = value
-            // Search
-            case ("search", "web_search"):   search.webSearch = value
-            case ("search", "favicon_service"): search.faviconService = value
-            case ("search", "show_system_commands"): search.showSystemCommands = (value == "true")
-            case ("search", "show_path"):    search.showPath = (value == "true")
-            case ("search", "excluded_apps"):
-                search.excludedApps = value.split(separator: ",").map {
-                    $0.trimmingCharacters(in: .whitespaces)
-                }
-            case ("search", "app_dirs"):
-                let home = FileManager.default.homeDirectoryForCurrentUser.path
-                search.extraAppDirs = value.split(separator: ",").map {
-                    $0.trimmingCharacters(in: .whitespaces)
-                        .replacingOccurrences(of: "~", with: home)
-                }
-            case ("search", "file_dirs"):
-                // Path-only — `~` is expanded inside FileIndex itself so
-                // the original config value can stay portable across users.
-                let parsed = value.split(separator: ",").map {
-                    $0.trimmingCharacters(in: .whitespaces)
-                }
-                // Empty list = disable file search; treat the literal
-                // string "" the same way to give users an obvious off switch.
-                search.fileDirs = parsed.filter { !$0.isEmpty }
-            case ("search", "file_prefix"):
-                // Take the first character — quietly ignore longer values
-                // rather than failing the whole config load. A multi-char
-                // prefix would clash with normal typing too easily.
-                if let first = value.first { search.filePrefix = String(first) }
-            // Aliases — flat form: `key = "value"`
-            case ("aliases", _):             aliases[key] = value
-            // Aliases — sub-table form: `[aliases.<key>]` then `name = ...` /
-            // `url = ...`. The display name surfaces in the launcher UI so
-            // a parameterized alias can read as e.g. "YouTube → cat videos"
-            // instead of just "y → cat videos".
-            case ("alias_subtable", "name"):
-                if let k = currentAliasKey { aliasNames[k] = value }
-            case ("alias_subtable", "url"),
-                 ("alias_subtable", "value"),
-                 ("alias_subtable", "path"),
-                 ("alias_subtable", "cmd"):
-                if let k = currentAliasKey { aliases[k] = value }
+            case ("layout", "width"): layout.width = min(2400, max(320, Int(value) ?? 780))
+            case ("layout", "max_results"): layout.maxResults = min(25, max(1, Int(value) ?? 8))
+            case ("layout", "placeholder"): layout.placeholder = value
+            case ("layout", "mode"): layout.mode = value.lowercased() == "grid" ? "grid" : "list"
+            case ("keybindings", "open"): keybindings.open = value
+            case ("keybindings", "close"): keybindings.close = value
+            case ("search", "web_search"): search.webSearch = value
+            case ("search", "show_path"): search.showPath = value == "true"
+            case ("search", "excluded_apps"): search.excludedApps = value.split(separator: ",").map { $0.trimmingCharacters(in: .whitespaces) }
             default: break
             }
         }
-
-        // Apply theme preset by name — built-in or user-defined under
-        // ~/.config/walter/themes/. Individual colors below it are ignored.
-        // Optional palette colors from the preset only override when the
-        // preset actually specifies them; otherwise we leave whatever the
-        // user set in [theme] (or nil, to derive a default).
-        if let themeName = theme.name?.lowercased(),
-           let preset = allThemes[themeName] {
-            theme.background = preset.background
-            theme.foreground = preset.foreground
-            theme.accent = preset.accent
+        if let name = theme.name?.lowercased(), let preset = allThemes[name] {
+            theme.background = preset.background; theme.foreground = preset.foreground; theme.accent = preset.accent
             if let s = preset.selection { theme.selection = s }
             if let s = preset.subtitle { theme.subtitle = s }
             if let b = preset.border { theme.border = b }
-            print("Theme applied: \(themeName)")
         }
-
-        // Update the favicon cache to whichever service the user picked
-        // and warm it for every URL alias so parameterized aliases pick up
-        // site icons without a startup-blocking fetch.
-        FaviconCache.shared.serviceTemplate = FaviconCache.template(for: search.faviconService)
-        let aliasHosts = aliases.values.compactMap { value -> String? in
-            guard value.hasPrefix("http://") || value.hasPrefix("https://") else { return nil }
-            return FaviconCache.hostname(for: value)
-        }
-        if !aliasHosts.isEmpty {
-            FaviconCache.shared.prefetch(hostnames: aliasHosts)
-        }
-
-        print("Config loaded from \(configURL.path)")
     }
 
-    // MARK: - File watcher
-    //
-    // Uses DispatchSource to watch the config file. Atomic writes (used by
-    // most editors and our own write(to:atomically:)) replace the file via
-    // rename, which invalidates the old file descriptor. So after each event
-    // we tear down and re-create the watcher on the new file.
+    /// Deliberately small quoted-string subset: no escaping, with an optional
+    /// trailing comment. Shared by bookmarks and app hotkeys; consume the whole
+    /// assignment rather than accepting a truncated key or target.
+    private static func parseQuotedAssignment(_ line: String) -> (key: String, value: String)? {
+        var rest = line[...]
+        func skipWhitespace() { rest = rest.drop(while: { $0.isWhitespace }) }
+        func quoted() -> String? {
+            skipWhitespace()
+            let quotes: Set<Character> = ["\"", "\u{201C}", "\u{201D}"]
+            guard let quote = rest.first, quotes.contains(quote) else { return nil }
+            rest = rest.dropFirst()
+            let endQuote: Character = quote == "\u{201C}" ? "\u{201D}" : quote
+            guard let end = rest.firstIndex(of: endQuote) else { return nil }
+            let value = String(rest[..<end])
+            guard !value.contains("\\") else { return nil }
+            rest = rest[rest.index(after: end)...]
+            return value
+        }
+        guard let key = quoted() else { return nil }
+        skipWhitespace()
+        guard rest.first == "=" else { return nil }
+        rest = rest.dropFirst()
+        guard let value = quoted() else { return nil }
+        skipWhitespace()
+        guard rest.isEmpty || rest.first == "#" else { return nil }
+        return (key: key, value: value)
+    }
+
+    /// Only known local theme names can be written; preserve unrelated config.
+    func selectTheme(_ name: String) {
+        guard allThemes[name] != nil,
+              name.rangeOfCharacter(from: CharacterSet(charactersIn: "\"\r\n\u{201C}\u{201D}")) == nil,
+              let content = try? String(contentsOf: configURL, encoding: .utf8) else { return }
+        var lines: [String] = []
+        var inTheme = false
+        var written = false
+        var foundSection = false
+        for line in content.components(separatedBy: "\n") {
+            let trimmed = line.trimmingCharacters(in: .whitespaces)
+            if trimmed.hasPrefix("["), trimmed.hasSuffix("]") {
+                if inTheme && !written { lines.append("name = \"\(name)\""); written = true }
+                inTheme = trimmed == "[theme]"
+                foundSection = foundSection || inTheme
+            }
+            let key = trimmed.split(separator: "=", maxSplits: 1).first?.trimmingCharacters(in: .whitespaces)
+            if inTheme && (key == "name" || key == "# name") {
+                if !written { lines.append("name = \"\(name)\""); written = true }
+            } else { lines.append(line) }
+        }
+        if !written {
+            if !foundSection { lines.append("[theme]") }
+            lines.append("name = \"\(name)\"")
+        }
+        try? lines.joined(separator: "\n").write(to: configURL, atomically: true, encoding: .utf8)
+    }
 
     private func startWatching() {
-        stopWatching()
-
-        let path = configURL.path
-        let fd = open(path, O_EVTONLY)
-        guard fd >= 0 else {
-            print("ConfigManager: can't watch \(path)")
-            return
-        }
-
-        let source = DispatchSource.makeFileSystemObjectSource(
-            fileDescriptor: fd,
-            eventMask: [.write, .rename, .delete, .attrib],
-            queue: .main
-        )
-        source.setEventHandler { [weak self] in
-            guard let self else { return }
-            // Stop old watcher (fd is now stale after atomic rename)
-            self.stopWatching()
-            // Delay briefly — the new file may not be fully in place yet
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
-                self.reload()
-                // Re-create watcher on the new file
-                self.startWatching()
+        watching = true
+        // A directory watcher sees replacements, but not writes to an existing
+        // file's contents. Watch both so in-place and atomic editor saves reload.
+        for url in [configURL, configURL.deletingLastPathComponent(), userThemesDir] {
+            let fd = open(url.path, O_EVTONLY)
+            guard fd >= 0 else { continue }
+            let source = DispatchSource.makeFileSystemObjectSource(fileDescriptor: fd, eventMask: [.write, .rename, .delete], queue: .main)
+            source.setCancelHandler { close(fd) }
+            source.setEventHandler { [weak self] in
+                guard let self, self.watching else { return }
+                self.pendingReload?.cancel()
+                let work = DispatchWorkItem { [weak self] in
+                    guard let self, self.watching else { return }
+                    // Reattach to the current config inode after atomic saves,
+                    // and to the theme directory if it was replaced.
+                    self.stopWatching()
+                    self.startWatching()
+                    self.reload()
+                }
+                self.pendingReload = work
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.15, execute: work)
             }
+            source.resume()
+            monitors.append(source)
         }
-        source.setCancelHandler { close(fd) }
-        source.resume()
-        fileMonitor = source
     }
 
-    private func stopWatching() {
-        fileMonitor?.cancel()
-        fileMonitor = nil
-    }
-
-    // MARK: - Themes directory watcher
-    //
-    // Watches ~/.config/walter/themes/ so that adding, editing, or removing
-    // a *.theme file triggers a reload without the user also having to
-    // touch config.toml. Uses the same DispatchSource fd-watcher pattern as
-    // the config-file monitor; the fd is on the directory itself, and
-    // .write fires whenever its contents change.
-
-    private func startWatchingThemes() {
-        stopWatchingThemes()
-
-        let path = userThemesDir.path
-        let fd = open(path, O_EVTONLY)
-        guard fd >= 0 else {
-            print("ConfigManager: can't watch \(path)")
-            return
-        }
-
-        let source = DispatchSource.makeFileSystemObjectSource(
-            fileDescriptor: fd,
-            eventMask: [.write, .rename, .delete, .attrib],
-            queue: .main
-        )
-        source.setEventHandler { [weak self] in
-            guard let self else { return }
-            self.stopWatchingThemes()
-            // Debounce — editors often emit multiple events per save.
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
-                self.reload()
-                self.startWatchingThemes()
-            }
-        }
-        source.setCancelHandler { close(fd) }
-        source.resume()
-        themesMonitor = source
-    }
-
-    private func stopWatchingThemes() {
-        themesMonitor?.cancel()
-        themesMonitor = nil
+    /// Explicit shutdown also prevents delayed callbacks from reviving watchers.
+    func stopWatching() {
+        watching = false
+        pendingReload?.cancel(); pendingReload = nil
+        for source in monitors { source.cancel() }
+        monitors.removeAll()
     }
 }

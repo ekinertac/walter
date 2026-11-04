@@ -1,21 +1,44 @@
-# Walter configuration
-# Copy to ~/.config/walter/config.toml and edit to taste.
-# All fields are optional — missing values fall back to the defaults shown here.
-
+# All settings optional. See docs/config.md. Missing config is created locally.
 [theme]
-background    = "#1e1e2e"   # window background (hex)
-foreground    = "#cdd6f4"   # primary text colour
-accent        = "#cba6f7"   # selection highlight, active states
-border_radius = 12          # window corner radius in pixels (before scaling)
-font          = "SF Pro"
-font_size     = 14
+# name = "catppuccin-mocha"
+background = "#1e1e2e"
+foreground = "#cdd6f4"
+accent = "#cba6f7"
+border_radius = 12
+font = "SF Pro"
+font_weight = "medium"
+blur_material = "hudWindow"
 
 [layout]
-width       = 780           # base window width in pixels (before scaling)
-max_results = 8             # how many results to show
-position    = "center"      # center | top | cursor
-scale       = 1.0           # UI scale factor: 1.0 = default, 1.5 = 50% bigger, 2.0 = double
+width = 780
+max_results = 8
+placeholder = "Search apps, calculate, convert..."
+mode = "list" # list | grid; fixed scale, top edge 30% down the pointer screen
 
 [keybindings]
-open    = "Alt+Space"
-close   = "Escape"
+open = "Cmd+Space"
+close = "Escape"
+
+# Global shortcuts: allowed apps (including the exact Finder path) or fixed HTTP(S) URLs.
+[app_hotkeys]
+# "Cmd+Ctrl+t" = "/Applications/kitty.app"
+"Cmd+Ctrl+f" = "/System/Library/CoreServices/Finder.app"
+# "Cmd+Ctrl+g" = "https://google.com"
+
+[search]
+web_search = "google"
+show_path = true
+# excluded_apps = Example, Another App
+
+# Bookmark keywords are fuzzy-matched; only fixed HTTP(S) URLs are accepted.
+[bookmarks]
+# "google" = "https://google.com"
+
+# Only HTTP(S) URLs and real apps resolved inside /Applications or /System/Applications.
+[aliases]
+# example = "/Applications/Example.app"
+gh = "https://github.com"
+
+[aliases.y]
+name = "YouTube"
+url = "https://www.youtube.com/results?search_query={query}"

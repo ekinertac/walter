@@ -1,6 +1,6 @@
 // LauncherPanelController.swift — The floating launcher window
 //
-// All dimensions use config.s() for the global scale factor.
+// Fixed scale, dynamic height; centered horizontally, top edge 30% down the pointer's screen.
 // Theme colors are applied to a background layer + vibrancy overlay.
 // Live theme preview paints colors directly without panel rebuild.
 
@@ -17,18 +17,19 @@ class LauncherPanelController: NSObject {
     private let resultsView: any ResultsView
     private var launcher: LauncherEngine!
     private let config: ConfigManager
+    private let appIndex: AppIndex
 
     private var selectedIndex = 0
     private var previousApp: NSRunningApplication?
     private var isThemePicker = false
-    private let history = History()
-    private var themeBeforePicker: String?
     var suppressConfigRebuild = false
 
-    init(config: ConfigManager) {
+    init(config: ConfigManager, appIndex: AppIndex, symbolIndex: SymbolIndex,
+         showConfigLocation: @escaping () -> Void) {
         self.config = config
+        self.appIndex = appIndex
 
-        let screenFrame = NSScreen.main?.visibleFrame ?? NSRect(x: 0, y: 0, width: 1440, height: 900)
+        let screenFrame = Self.pointerScreenFrame
         let width = min(config.s(CGFloat(config.layout.width)), screenFrame.width * 0.95)
         let inputHeight = config.s(72)
         let cornerRadius = config.s(CGFloat(config.theme.borderRadius))
@@ -45,8 +46,8 @@ class LauncherPanelController: NSObject {
         backgroundLayer = CALayer()
         backgroundLayer.cornerRadius = cornerRadius
         backgroundLayer.masksToBounds = true
-        backgroundLayer.backgroundColor = (NSColor(hex: config.theme.background) ?? NSColor(white: 0.1, alpha: 1))
-            .withAlphaComponent(0.92).cgColor
+        let background = NSColor(hex: config.theme.background) ?? NSColor(white: 0.1, alpha: 1)
+        backgroundLayer.backgroundColor = background.withAlphaComponent(background.alphaComponent * 0.92).cgColor
 
         // --- Vibrancy overlay (adds blur on top of the color) ---
         vibrancyView = NSVisualEffectView()
@@ -78,10 +79,7 @@ class LauncherPanelController: NSObject {
         let placeholderColor = config.theme.placeholderColor.flatMap { NSColor(hex: $0) }
             ?? fgColor.withAlphaComponent(0.5)
         let searchFont = Self.resolveFont(name: config.theme.font, size: config.s(28), weight: .light)
-        // CenteredTextField vertically centers text inside the (much taller
-        // at high `layout.scale`) field, so when the auto-shrink kicks in
-        // the cursor and glyphs stay on the field's midline instead of
-        // sticking to the top.
+        // Keep glyphs and cursor centered even when a long query shrinks.
         searchField = CenteredTextField()
         searchField.font = searchFont
         // Attributed placeholder must carry the field's font explicitly —
@@ -95,12 +93,7 @@ class LauncherPanelController: NSObject {
         searchField.focusRingType = .none
         searchField.drawsBackground = false
         // Lock the cell to single-line, horizontally-scrolling behavior.
-        // Without this, very long queries at large `layout.scale` values
-        // wrap to multiple visual lines and bleed past the top of the
-        // input area (a long path like
-        // `subl ~/Code/.../specs/2026-06-26-qwok-design.md` renders the
-        // first half above the search icon and clips against the panel
-        // edge).
+        // Long queries must not wrap outside the input area.
         searchField.cell?.usesSingleLineMode = true
         searchField.cell?.wraps = false
         searchField.cell?.isScrollable = true
@@ -173,10 +166,11 @@ class LauncherPanelController: NSObject {
             resultsView.bottomAnchor.constraint(equalTo: vibrancyView.bottomAnchor),
         ])
 
-        launcher = LauncherEngine(config: config, extraAppDirs: config.search.extraAppDirs, onIndexChanged: { [weak self] in
-            guard let self, self.panel.isVisible else { return }
-            self.updateResults(query: self.searchField.stringValue)
-        })
+        launcher = LauncherEngine(config: config,
+            entries: { [weak appIndex] in appIndex?.allEntries ?? [] },
+            symbolLoader: { [weak symbolIndex] name, description in
+                symbolIndex?.image(name: name, description: description)
+            })
 
         resultsView.onRowClicked = { [weak self] index in
             guard let self else { return }
@@ -186,10 +180,14 @@ class LauncherPanelController: NSObject {
         }
 
         searchField.delegate = self
+        panel.closeBinding = (try? HotkeyBinding.parse(config.keybindings.close)) ?? (try? HotkeyBinding.parse("Escape"))
+        panel.onClose = { [weak self] in self?.cancelSelection() }
+        panel.onQuit = { NSApp.terminate(nil) }
+        panel.onConfigLocation = showConfigLocation
 
         // Cmd-shortcuts arrive as key-equivalents, not editing commands, so
         // they're handled at the panel level rather than in doCommandBy:.
-        panel.onCommandReturn = { [weak self] in self?.revealSelectionInFinder() }
+        panel.onCommandReturn = { [weak self] in self?.revealAllowedApp() }
         panel.onQuickSelect = { [weak self] n in self?.quickSelect(n) }
         panel.onCopyResult = { [weak self] in self?.copySelectionValue() ?? false }
 
@@ -217,26 +215,21 @@ class LauncherPanelController: NSObject {
         if frontmost?.bundleIdentifier != Bundle.main.bundleIdentifier {
             previousApp = frontmost
         }
-        // Every fresh open starts at "newest" — so the first Up press
-        // recalls the most recent query, the second goes one back, etc.
-        history.resetCursor()
-        // Re-scan the app index every time the launcher opens. FSEvents
-        // usually keeps it current, but agent-app suspension can let a
-        // freshly-installed app slip past until something else triggers
-        // a rebuild. Doing it here means "I just installed this app, why
-        // doesn't Walter see it" can be answered with "open Walter".
-        launcher.refreshIndexes()
-        restoreOrCenterPosition()
+        positionOnScreen()
         // Sync background layer size
         backgroundLayer.frame = panel.contentView?.bounds ?? .zero
         panel.makeKeyAndOrderFront(nil)
         panel.makeFirstResponder(searchField)
         NSApp.activate(ignoringOtherApps: true)
+        // Present the existing snapshot first. A throttled background hedge
+        // prepares future queries without rebuilding this visible selection.
+        appIndex.refreshForPopup()
     }
 
     func hide() {
-        savePosition()
         panel.orderOut(nil)
+        if isThemePicker { restoreConfiguredTheme() }
+        suppressConfigRebuild = false
         resetState()
         if let app = previousApp {
             app.activate()
@@ -248,60 +241,39 @@ class LauncherPanelController: NSObject {
         panel.isVisible ? hide() : show()
     }
 
+    /// Alert dismissal must not reveal a hidden/replaced popup or steal focus
+    /// from another app. Do not call show(), reset the query, or refresh results.
+    func restoreInputFocus() {
+        guard ConfigLocationPresenter.shouldRestoreFocus(popupVisible: panel.isVisible,
+            applicationActive: NSApp.isActive) else { return }
+        panel.makeKeyAndOrderFront(nil)
+        if let editor = searchField.currentEditor(), panel.firstResponder === editor { return }
+        panel.makeFirstResponder(searchField)
+    }
+
     @objc private func appDidResignActive() {
         if panel.isVisible { hide() }
     }
 
-    // MARK: - Position save/restore
-
-    private static let posXKey = "walter.panel.x"
-    private static let posTopYKey = "walter.panel.topY"
-    private static let posScaleKey = "walter.panel.scale"
-
-    private func restoreOrCenterPosition() {
-        let defaults = UserDefaults.standard
-        if defaults.object(forKey: Self.posXKey) != nil {
-            let x = CGFloat(defaults.double(forKey: Self.posXKey))
-            let topY = CGFloat(defaults.double(forKey: Self.posTopYKey))
-            let savedScale = CGFloat(defaults.double(forKey: Self.posScaleKey))
-            let currentScale = CGFloat(config.layout.scale)
-
-            // Adjust topY for scale change so the window stays visually fixed
-            let adjustedTopY = topY + (savedScale - currentScale) * baseWindowHeight * 0.5
-
-            let y = adjustedTopY - panel.frame.height
-            let origin = NSPoint(x: x, y: y)
-            if isOnScreen(origin: origin) {
-                panel.setFrameOrigin(origin)
-                return
-            }
-        }
-        centerOnScreen()
+    private static var pointerScreenFrame: NSRect {
+        PopupGeometry.visibleFrame(pointer: NSEvent.mouseLocation,
+            screens: NSScreen.screens.map { ($0.frame, $0.visibleFrame) }, fallback: NSScreen.main?.visibleFrame)
     }
 
-    private var baseWindowHeight: CGFloat {
-        // Input field height without results
-        return CGFloat(72)
+    private func positionOnScreen(height: CGFloat? = nil) {
+        let frame = PopupGeometry.fittedFrame(width: CGFloat(config.layout.width),
+            height: height ?? panel.frame.height, in: Self.pointerScreenFrame)
+        guard panel.frame != frame else { return }
+        // Size and position change together. Do not force drawing inside the
+        // text-change delegate; AppKit can render input/results together at the
+        // normal display pass, after the entire update has completed.
+        panel.setFrame(frame, display: false, animate: false)
+        panel.contentView?.needsDisplay = true
     }
 
-    private func centerOnScreen() {
-        guard let screen = NSScreen.main else { return }
-        let screenFrame = screen.visibleFrame
-        let x = screenFrame.midX - panel.frame.width / 2
-        let y = screenFrame.midY + screenFrame.height * 0.2
-        panel.setFrameOrigin(NSPoint(x: x, y: y))
-    }
-
-    private func isOnScreen(origin: NSPoint) -> Bool {
-        let panelRect = NSRect(origin: origin, size: panel.frame.size)
-        return NSScreen.screens.contains { panelRect.intersects($0.visibleFrame) }
-    }
-
-    private func savePosition() {
-        let frame = panel.frame
-        UserDefaults.standard.set(Double(frame.origin.x), forKey: Self.posXKey)
-        UserDefaults.standard.set(Double(frame.origin.y + frame.height), forKey: Self.posTopYKey)
-        UserDefaults.standard.set(Double(config.layout.scale), forKey: Self.posScaleKey)
+    func refreshResults() {
+        guard panel.isVisible else { return }
+        updateResults(query: searchField.stringValue)
     }
 
     // MARK: - State
@@ -313,23 +285,25 @@ class LauncherPanelController: NSObject {
         adjustInputFontSize()
         selectedIndex = 0
         isThemePicker = false
+        setPlaceholder(config.layout.placeholder)
         updateResults(query: "")
     }
 
     private func updateResults(query: String) {
-        let results: [SearchResult]
-        if isThemePicker {
-            results = launcher.themeResults(filter: query)
-        } else {
-            results = launcher.search(query: query)
+        let timing = InputTiming.shared
+        let results = timing.measure(.search) {
+            isThemePicker ? launcher.themeResults(filter: query) : launcher.search(query: query)
         }
         selectedIndex = 0
-        resultsView.update(results: results, selectedIndex: selectedIndex)
-        // Rows are rebuilt fresh on every update and reset to system label
-        // colors, so re-apply the configured theme palette each time.
-        applyResultColors()
-        resizePanelToFit(resultCount: results.count, results: results)
-        separator.isHidden = results.isEmpty
+        timing.measure(.views) { resultsView.update(results: results, selectedIndex: selectedIndex) }
+        // Apply the current palette to both reused and newly allocated views;
+        // retained slots must not preserve an old preview palette.
+        timing.measure(.colors) {
+            applyResultColors()
+            separator.isHidden = results.isEmpty
+        }
+        timing.measure(.geometry) { resizePanelToFit(resultCount: results.count, results: results) }
+        if isThemePicker { notifyPreviewIfNeeded() }
     }
 
     /// Resolves the configured theme palette (with fallbacks for the
@@ -363,15 +337,7 @@ class LauncherPanelController: NSObject {
         let inputHeight = config.s(72)
         let separatorHeight: CGFloat = resultCount > 0 ? config.s(18) : 0
         let resultsHeight = resultsView.contentHeight(for: results, maxRows: config.layout.maxResults)
-        let screenHeight = NSScreen.main?.visibleFrame.height ?? 900
-        let maxHeight = screenHeight * 0.9
-        let newHeight = min(inputHeight + separatorHeight + resultsHeight, maxHeight)
-
-        var frame = panel.frame
-        let delta = newHeight - frame.height
-        frame.origin.y -= delta
-        frame.size.height = newHeight
-        panel.setFrame(frame, display: true, animate: false)
+        positionOnScreen(height: inputHeight + separatorHeight + resultsHeight)
 
         // Keep background layer in sync with the new frame
         CATransaction.begin()
@@ -421,16 +387,20 @@ class LauncherPanelController: NSObject {
 
     // MARK: - Theme preview
 
-    /// Applies a theme visually on the live panel without rebuild.
-    /// Also writes to config so Enter just needs to exit.
+    /// Preview is local UI only; Enter explicitly persists the chosen theme.
     private func previewTheme(_ name: String) {
-        suppressConfigRebuild = true
-        launcher.applyTheme(name: name)
-
-        // Look up across built-in AND user themes so previewing a custom
-        // theme also picks up its optional selection/subtitle colors.
         guard let preset = config.allThemes[name] else { return }
+        suppressConfigRebuild = true
+        paintTheme(preset)
+    }
 
+    private func restoreConfiguredTheme() {
+        paintTheme(ThemePreset(background: config.theme.background,
+            foreground: config.theme.foreground, accent: config.theme.accent,
+            selection: config.theme.selection, subtitle: config.theme.subtitle, border: config.theme.border))
+    }
+
+    private func paintTheme(_ preset: ThemePreset) {
         let bg = NSColor(hex: preset.background) ?? NSColor(white: 0.1, alpha: 1)
         let palette = Self.resolvePalette(
             foreground: preset.foreground,
@@ -442,10 +412,10 @@ class LauncherPanelController: NSObject {
         // Background — transparent bg means "system vibrancy only" (Spotlight look)
         CATransaction.begin()
         CATransaction.setDisableActions(true)
-        if preset.background.contains("00000000") || preset.background.count <= 2 {
+        if bg.alphaComponent == 0 {
             backgroundLayer.backgroundColor = CGColor.clear
         } else {
-            backgroundLayer.backgroundColor = bg.withAlphaComponent(0.92).cgColor
+            backgroundLayer.backgroundColor = bg.withAlphaComponent(bg.alphaComponent * 0.92).cgColor
         }
         CATransaction.commit()
 
@@ -512,25 +482,31 @@ class LauncherPanelController: NSObject {
         }
     }
 
+    private func cancelSelection() {
+        if isThemePicker {
+            restoreConfiguredTheme()
+            suppressConfigRebuild = false
+            isThemePicker = false
+            searchField.stringValue = ""
+            setPlaceholder(config.layout.placeholder)
+            updateResults(query: "")
+        } else { hide() }
+    }
+
     private func confirmSelection() {
         guard let result = resultsView.result(at: selectedIndex) else { return }
 
         switch result.action {
         case .enterThemePicker:
-            themeBeforePicker = config.theme.name
             isThemePicker = true
             searchField.stringValue = ""
             setPlaceholder("Filter themes...")
             updateResults(query: "")
-            if let first = resultsView.result(at: 0), case .applyTheme(let name) = first.action {
-                previewTheme(name)
-            }
             return
 
-        case .applyTheme:
-            // Enter confirms — theme already written by preview
+        case .applyTheme(let name):
+            launcher.applyTheme(name: name)
             suppressConfigRebuild = false
-            themeBeforePicker = nil
             isThemePicker = false
             setPlaceholder(config.layout.placeholder)
             hide()
@@ -539,38 +515,14 @@ class LauncherPanelController: NSObject {
         default:
             // Hide first so the panel disappears instantly on selection,
             // then launch async so NSWorkspace.open() doesn't stall the UI.
-            recordHistory()
             hide()
             DispatchQueue.main.async { self.launcher.launch(result: result) }
         }
     }
 
-    /// Records the current query into history. Skipped while the theme
-    /// picker is active (its query is a transient filter, not something
-    /// the user wants to recall later).
-    private func recordHistory() {
-        guard !isThemePicker else { return }
-        history.push(searchField.stringValue)
-    }
-
-    /// Programmatically replaces the input with a recalled history entry
-    /// and re-runs search. Assigning to `stringValue` does NOT fire
-    /// `controlTextDidChange`, so it won't reset the history cursor —
-    /// the user can keep stepping with subsequent Up/Down presses.
-    private func setQueryFromHistory(_ query: String) {
-        searchField.stringValue = query
-        adjustInputFontSize()
-        updateResults(query: query)
-    }
-
     /// Shrinks the search input's font when the text is wider than the
     /// field can display at the base size, with a hard floor so it never
-    /// becomes unreadable. At large `layout.scale` values (e.g. 3.0) the
-    /// base font is ~84pt — a long path like
-    /// `subl ~/Code/qwok/docs/superpowers/specs/2026-06-26-qwok-design.md`
-    /// is multiple hundreds of points wide. Without this, the field's
-    /// horizontal scroll hides everything but the tail, making it
-    /// impossible to read the query you're typing.
+    /// becomes unreadable. Longer queries then scroll horizontally.
     private func adjustInputFontSize() {
         let text = searchField.stringValue
         let baseSize = config.s(28)
@@ -611,48 +563,31 @@ class LauncherPanelController: NSObject {
     }
 
     /// Cmd+C — copy the selected result's underlying value to the
-    /// clipboard: file/app path, alias URL, shell command, or computed
+    /// clipboard: revalidated app path, alias/Settings URL, or computed
     /// answer. Returns true if something was copied. The launcher hides
     /// afterward, matching the feel of completing an action.
     private func copySelectionValue() -> Bool {
         guard let result = resultsView.result(at: selectedIndex) else { return false }
         let text: String?
         switch result.action {
-        case .open(let p):         text = p
-        case .openInEditor(let p): text = p
-        case .url(let u):          text = u
-        case .copy(let v):         text = v
-        case .shell(let c):        text = c
-        case .systemCommand, .enterThemePicker, .applyTheme: text = nil
+        case .openApp(let path): text = AllowedApps().validatedURL(for: path)?.path
+        case .url(let u), .settings(let u): text = u
+        case .copy(let v): text = v
+        case .enterThemePicker, .applyTheme: text = nil
         }
         guard let text, !text.isEmpty else { return false }
         NSPasteboard.general.clearContents()
         NSPasteboard.general.setString(text, forType: .string)
-        recordHistory()
         hide()
         return true
     }
 
-    /// Reveals the selected result in Finder (Cmd+Return). Only results
-    /// backed by a filesystem path — apps and file-search hits — can be
-    /// revealed; for anything else (URLs, calculator answers, system
-    /// commands) we fall back to the normal action so the keystroke is
-    /// never a dead no-op.
-    private func revealSelectionInFinder() {
+    private func revealAllowedApp() {
         guard let result = resultsView.result(at: selectedIndex) else { return }
-        let path: String?
-        switch result.action {
-        case .open(let p):         path = p
-        case .openInEditor(let p): path = p
-        default:                   path = nil
-        }
-        guard let path else {
-            confirmSelection()
-            return
-        }
-        recordHistory()
+        guard case .openApp(let path) = result.action else { confirmSelection(); return }
+        guard let url = AllowedApps().validatedURL(for: path) else { return }
         hide()
-        NSWorkspace.shared.activateFileViewerSelecting([URL(fileURLWithPath: path)])
+        NSWorkspace.shared.activateFileViewerSelecting([url])
     }
 }
 
@@ -660,34 +595,19 @@ class LauncherPanelController: NSObject {
 
 extension LauncherPanelController: NSTextFieldDelegate {
     func controlTextDidChange(_ obj: Notification) {
-        // Any real keystroke exits history navigation — subsequent Up/Down
-        // go back to moving the result selection.
-        history.resetCursor()
-        adjustInputFontSize()
-        updateResults(query: searchField.stringValue)
+        InputTiming.shared.measure(.delegate) {
+            InputTiming.shared.measure(.font) { adjustInputFontSize() }
+            updateResults(query: searchField.stringValue)
+        }
     }
 
     func control(_ control: NSControl, textView: NSTextView, doCommandBy commandSelector: Selector) -> Bool {
         if commandSelector == #selector(NSResponder.cancelOperation(_:)) {
-            if isThemePicker {
-                if let original = themeBeforePicker {
-                    previewTheme(original)
-                }
-                suppressConfigRebuild = false
-                themeBeforePicker = nil
-                isThemePicker = false
-                searchField.stringValue = ""
-                setPlaceholder(config.layout.placeholder)
-                updateResults(query: "")
-            } else {
-                hide()
-            }
+            cancelSelection()
             return true
         }
         if commandSelector == #selector(NSResponder.insertNewline(_:)) {
-            // Plain Return launches/opens. Cmd+Return (reveal in Finder) is
-            // handled in KeyablePanel.performKeyEquivalent — it never reaches
-            // here because AppKit routes Cmd-modified keys as key-equivalents.
+            // Return activates the selected allowed result.
             confirmSelection(); return true
         }
         if commandSelector == #selector(NSResponder.insertTab(_:)) {
@@ -697,26 +617,9 @@ extension LauncherPanelController: NSTextFieldDelegate {
             moveSelection(by: -1); return true
         }
         if commandSelector == #selector(NSResponder.moveDown(_:)) {
-            // History navigation only kicks in when the input is empty
-            // (or we're already paging through history). As soon as the
-            // user types, Down goes back to moving the result selection.
-            if (searchField.stringValue.isEmpty || history.isNavigating) && !isThemePicker {
-                if let entry = history.next() {
-                    setQueryFromHistory(entry)
-                    return true
-                }
-                return true   // swallow; nothing newer than current state
-            }
             moveSelection(dx: 0, dy: 1); return true
         }
         if commandSelector == #selector(NSResponder.moveUp(_:)) {
-            if (searchField.stringValue.isEmpty || history.isNavigating) && !isThemePicker {
-                if let entry = history.previous() {
-                    setQueryFromHistory(entry)
-                    return true
-                }
-                return true   // swallow when history is empty
-            }
             moveSelection(dx: 0, dy: -1); return true
         }
         // Only intercept horizontal arrows when in grid mode AND a tile
