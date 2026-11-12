@@ -137,7 +137,7 @@ while the launcher is open:
 | `Cmd+1` … `Cmd+9` | Jump to and activate the Nth visible result (hint shown on each row) |
 | `Cmd+C` | Copy the selected result's value — file/app path, alias URL, shell command, or computed answer. When text is selected in the search field, defers to normal text copy. |
 | `Cmd+V` | Paste into the search field |
-| `Tab` / `Shift+Tab` | Next / previous result |
+| `Tab` | Complete the selected GitHub owner or repo into the search field (see [`github_prefix`](#github_prefix)) |
 | `↑` / `↓` | Move selection (list and grid) |
 | `←` / `→` | Move the text cursor; in grid mode, move between tiles when a tile is selected |
 | `Esc` | Close the launcher (or exit theme-preview / file mode) |
@@ -182,6 +182,7 @@ Behavior of the search engine, app indexer, and trailing fallback row.
 | `app_dirs`             | csv    | `""`       | Extra directories to scan for `.app` bundles. `~` is expanded. |
 | `file_dirs`            | csv    | unset (= disabled)                    | Directories indexed for prefix-triggered file search. Fresh installs get `~/Documents, ~/Desktop, ~/Downloads` in the generated config. |
 | `file_prefix`          | string | `` "`" ``                             | Single character that activates file-search mode when typed first. |
+| `github_prefix`        | string | `"repo"`                              | Word that starts GitHub repo search when followed by a space. Empty disables it. |
 
 ### `web_search`
 
@@ -294,6 +295,32 @@ file_prefix = "/"
 If `file_dirs` is empty, hitting the prefix surfaces a one-row
 shortcut that opens `config.toml` in your editor so you can fill in
 the directories without leaving the launcher.
+
+### `github_prefix`
+
+Type the prefix, a space, and part of an owner name: `repo hum` lists
+matching owners. Your own account comes first, then your orgs, then
+owners of repos you collaborate on. Press `Tab` to complete the
+selected owner, then type part of a repo name: `repo Humbl-Solutions-OU str`.
+`Tab` completes the repo name too. `Enter` opens the selected owner or
+repo on github.com, and `Cmd+C` copies its URL. You can skip the first
+`Tab`: `repo hum str` uses the best-matching owner.
+
+The repo list comes from the [`gh` CLI](https://cli.github.com), so
+Walter uses your existing GitHub login and never stores a token. Set it
+up once with `brew install gh && gh auth login`. The first fetch takes
+about 15-20 seconds for a few hundred repos. After that the list is
+cached in `~/.config/walter/.cache/github.json` and refreshed in the
+background once a day, so a repo created today can take up to a day to
+appear. Delete that file to force a refresh.
+
+The prefix only triggers with a space after it, so typing the prefix
+alone still searches apps as usual. It does shadow an alias with the
+same key; rename one of them if they clash.
+
+```toml
+github_prefix = "repo"   # set to "" to turn GitHub search off
+```
 
 ---
 

@@ -380,14 +380,6 @@ class LauncherPanelController: NSObject {
         CATransaction.commit()
     }
 
-    private func moveSelection(by delta: Int) {
-        let count = resultsView.resultCount
-        guard count > 0 else { return }
-        selectedIndex = resultsView.step(by: delta, from: selectedIndex)
-        resultsView.update(selectedIndex: selectedIndex)
-        notifyPreviewIfNeeded()
-    }
-
     /// Two-dimensional move (used by grid mode for left/right keys).
     /// In list mode the grid view's `step(dx:dy:)` ignores horizontal motion.
     private func moveSelection(dx: Int, dy: Int) {
@@ -690,11 +682,21 @@ extension LauncherPanelController: NSTextFieldDelegate {
             // here because AppKit routes Cmd-modified keys as key-equivalents.
             confirmSelection(); return true
         }
+        // Tab completes: it puts the selected result's `completion` text
+        // into the field (GitHub owner/repo). It used to move the selection,
+        // which the arrow keys already do. Both Tab keys are always
+        // swallowed so AppKit doesn't move focus out of the search field.
         if commandSelector == #selector(NSResponder.insertTab(_:)) {
-            moveSelection(by: 1); return true
+            if let completion = resultsView.result(at: selectedIndex)?.completion {
+                searchField.stringValue = completion
+                textView.selectedRange = NSRange(location: (completion as NSString).length, length: 0)
+                adjustInputFontSize()
+                updateResults(query: completion)
+            }
+            return true
         }
         if commandSelector == #selector(NSResponder.insertBacktab(_:)) {
-            moveSelection(by: -1); return true
+            return true
         }
         if commandSelector == #selector(NSResponder.moveDown(_:)) {
             // History navigation only kicks in when the input is empty

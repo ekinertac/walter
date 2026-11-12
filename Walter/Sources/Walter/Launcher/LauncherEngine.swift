@@ -21,6 +21,9 @@ struct SearchResult {
     let subtitle: String
     let icon: NSImage?
     let action: ResultAction
+    /// Full query text that Tab puts in the search field when this result
+    /// is selected (GitHub owner/repo completion). nil = Tab does nothing.
+    var completion: String? = nil
 }
 
 enum ResultAction {
@@ -38,6 +41,7 @@ class LauncherEngine {
 
     private let appIndex: AppIndex
     private let fileIndex: FileIndex
+    private let githubIndex: GitHubIndex
     private let frecency = FrecencyTracker()
     private let calculator = Calculator()
     private let converter = Converter()
@@ -58,6 +62,7 @@ class LauncherEngine {
         systemCommands = SystemCommands(config: config)
         appIndex = AppIndex(extraDirs: extraAppDirs, onChange: onIndexChanged)
         fileIndex = FileIndex(dirs: config.search.fileDirs, onChange: onIndexChanged)
+        githubIndex = GitHubIndex(onChange: onIndexChanged)
     }
 
     /// Forwards a refresh request to the underlying app index. The
@@ -68,6 +73,16 @@ class LauncherEngine {
     }
 
     func search(query: String) -> [SearchResult] {
+        // GitHub mode is checked on the raw query, before trimming: the
+        // space after the prefix ("repo ") and the trailing space after a
+        // completed owner ("repo owner ") carry meaning. The bare prefix
+        // with no space still searches apps.
+        let ghPrefix = (config?.search.githubPrefix ?? "") + " "
+        let leading = String(query.drop(while: { $0 == " " }))
+        if ghPrefix.count > 1, leading.lowercased().hasPrefix(ghPrefix.lowercased()) {
+            return githubResults(rest: String(leading.dropFirst(ghPrefix.count)), prefix: ghPrefix)
+        }
+
         let q = query.trimmingCharacters(in: .whitespaces)
         if q.isEmpty { return [] }
 
@@ -309,6 +324,59 @@ class LauncherEngine {
             icon: icon,
             action: action
         )
+    }
+
+    /// Builds GitHub owner or repo rows for "<prefix> owner [repo]" queries.
+    /// Each row carries a `completion` so Tab can fill it into the field;
+    /// Enter opens the page. `prefix` includes its trailing space.
+    private func githubResults(rest: String, prefix: String) -> [SearchResult] {
+        githubIndex.ensureFresh()
+
+        let data: GitHubData
+        switch githubIndex.state {
+        case .ready(let d):
+            data = d
+        case .loading:
+            return [SearchResult(
+                title: "Loading your GitHub repos…",
+                subtitle: "First fetch takes ~15-20 s, then it's cached",
+                icon: NSImage(systemSymbolName: "arrow.triangle.2.circlepath", accessibilityDescription: "Loading"),
+                action: .copy(""))]
+        case .ghMissing:
+            return [SearchResult(
+                title: "GitHub search needs the gh CLI",
+                subtitle: "Run: brew install gh && gh auth login — Enter to copy",
+                icon: NSImage(systemSymbolName: "exclamationmark.triangle", accessibilityDescription: "gh missing"),
+                action: .copy("brew install gh && gh auth login"))]
+        case .failed(let message):
+            return [SearchResult(
+                title: "Couldn't load GitHub repos",
+                subtitle: message,
+                icon: NSImage(systemSymbolName: "exclamationmark.triangle", accessibilityDescription: "gh failed"),
+                action: .copy(message))]
+        }
+
+        let icon = NSImage(systemSymbolName: "chevron.left.forwardslash.chevron.right",
+                           accessibilityDescription: "GitHub")
+        switch GitHubQuery.parse(rest) {
+        case .owner(let word):
+            return GitHubRanking.matchingOwners(data, word: word).map { owner in
+                SearchResult(title: owner,
+                             subtitle: "github.com/\(owner) — Tab to pick repo",
+                             icon: icon,
+                             action: .url("https://github.com/\(owner)"),
+                             completion: prefix + owner + " ")
+            }
+        case .repo(let ownerWord, let word):
+            guard let owner = GitHubRanking.resolveOwner(data, word: ownerWord) else { return [] }
+            return GitHubRanking.matchingRepos(data, owner: owner, word: word).map { name in
+                SearchResult(title: name,
+                             subtitle: "\(owner)/\(name)",
+                             icon: icon,
+                             action: .url("https://github.com/\(owner)/\(name)"),
+                             completion: prefix + owner + " " + name)
+            }
+        }
     }
 
     /// Builds the file-search result list for queries beginning with the

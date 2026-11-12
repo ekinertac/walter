@@ -5,6 +5,22 @@ All notable changes to Walter are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+- **GitHub repo search.** Type `repo hum` to list matching owners (your
+  account first, then your orgs, then collaborator owners), `Tab` to
+  complete one, then type part of a repo name and `Enter` to open it on
+  github.com. Data comes from the `gh` CLI, so there is no token to
+  configure; the list is cached for a day. Prefix set by
+  `[search] github_prefix`, empty turns it off.
+
+### Changed
+- **`Tab` now completes instead of moving the selection.** It fills the
+  selected GitHub owner or repo into the search field and does nothing
+  elsewhere. `Shift+Tab` does nothing. Use the arrow keys to move
+  through results.
+
 ## [1.7.2] — 2026-09-06
 
 ### Fixed

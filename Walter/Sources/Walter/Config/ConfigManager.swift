@@ -67,6 +67,9 @@ class ConfigManager {
         /// to reach on US/UK layouts and isn't shadowed by anything else
         /// in the launcher's input vocabulary.
         var filePrefix: String = "`"
+        /// Word that starts GitHub repo search when followed by a space
+        /// ("repo hum"). Needs the gh CLI; empty disables the feature.
+        var githubPrefix: String = "repo"
     }
 
     struct General {
@@ -263,6 +266,11 @@ file_dirs            = ~/Documents, ~/Desktop, ~/Downloads
 # Pick something you don't normally type at the start of a query.
 # file_prefix        = "`"
 
+# Word that starts GitHub repo search: "repo hum" lists owners, Tab completes,
+# then type a repo name; Enter opens it in the browser. Uses the gh CLI's
+# login (brew install gh && gh auth login). Empty disables it.
+# github_prefix      = "repo"
+
 # ---------------------------------------------------------------------------
 # Aliases
 # ---------------------------------------------------------------------------
@@ -450,6 +458,9 @@ file_dirs            = ~/Documents, ~/Desktop, ~/Downloads
                 // rather than failing the whole config load. A multi-char
                 // prefix would clash with normal typing too easily.
                 if let first = value.first { search.filePrefix = String(first) }
+            case ("search", "github_prefix"):
+                // One word; anything after a space could never be typed as a prefix.
+                search.githubPrefix = String(value.split(separator: " ").first ?? "")
             // Aliases — flat form: `key = "value"`
             case ("aliases", _):             aliases[key] = value
             // Aliases — sub-table form: `[aliases.<key>]` then `name = ...` /

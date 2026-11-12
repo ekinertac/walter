@@ -155,7 +155,7 @@ url  = "https://www.youtube.com/results?search_query={query}"
 | Action | Key |
 |---|---|
 | Open/close launcher | Alt+Space (configurable) |
-| Navigate results | Tab / Shift+Tab / Arrow keys |
+| Navigate results | Arrow keys |
 | Recall last query | Up arrow on empty input (Down to step toward newer) |
 | Launch / copy result | Enter |
 | Reveal in Finder | Cmd+Enter (apps and file-search results) |
@@ -163,6 +163,7 @@ url  = "https://www.youtube.com/results?search_query={query}"
 | Copy result value | Cmd+C (file/app path, URL, computed answer; defers to text copy when text is selected) |
 | Paste into search | Cmd+V |
 | File search | Type `` ` `` then a filename (prefix configurable) |
+| GitHub repos | Type `repo hum`, Tab to complete the owner, type a repo name, Tab, Enter (needs `gh` CLI) |
 | Close | Escape |
 | Open config | Cmd+, |
 | Change theme | Type "theme", browse with arrows, Enter to confirm, Esc to revert |
