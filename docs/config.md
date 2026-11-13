@@ -9,10 +9,14 @@ a hidden popup. Theme selection writes only the config file. There is no
 ## Parser subset
 
 Sections, `key = value`, quoted strings (straight or smart double quotes),
-quoted keys in `[app_hotkeys]` and `[bookmarks]`, booleans, numbers, and comma-separated
-`excluded_apps` are supported. Whole-line
-comments begin with `#`; inline comments after quoted values are supported.
+quoted keys in `[app_hotkeys]` and `[bookmarks]`, booleans, numbers, and a string
+array for `search.excluded_apps` are supported. Whole-line comments begin with
+`#`; inline comments after quoted values are supported.
 This is not full TOML: no arbitrary arrays, escaping, or general nested tables.
+Exclusion arrays accept straight double-quoted or single-quoted strings without
+escapes, multiline formatting, comments outside strings, and a trailing comma.
+Malformed arrays are ignored in their entirety (no exclusions); the old bare
+comma-separated or single-string format is no longer supported.
 Unknown/removed settings are ignored. Missing values use model defaults.
 An invalid hotkey is reported rather than silently interpreted as Space.
 
@@ -178,14 +182,25 @@ popup rebuilds/theme previews do not own them. Quitting releases all registratio
 | --- | --- | --- |
 | `web_search` | `"google"` | `google`, `duckduckgo`/`ddg`, `bing`, or an HTTP(S) URL template containing `{query}`. |
 | `show_path` | `true` | Show an app's path in its result subtitle. |
-| `excluded_apps` | empty | Comma-separated display names, case-insensitive. |
+| `excluded_apps` | `[]` | String array of display names or full app paths, case-insensitive. |
 
 ```toml
 [search]
 web_search = "https://kagi.com/search?q={query}"
 show_path = true
-excluded_apps = Example, Another App
+excluded_apps = [
+    "/System/Applications/News.app",
+    "Another App", # Names are also accepted
+]
 ```
+
+Exclusions hide discovered app results in both list and grid layouts. A display
+name hides all apps with that name; a full path hides only that indexed path
+(no glob or folder matching). Use the path shown in the app's result subtitle.
+Single-line arrays also work: `excluded_apps = ["/System/Applications/News.app"]`.
+Use `excluded_apps = []` to clear exclusions. Saving applies changes live;
+removing an entry restores its results. Explicit aliases and app hotkeys are not
+affected.
 
 Web search is the fallback. Query substitution is percent-encoded (including
 parameter separators such as `&`); there are no suggestions, prefetches, URL

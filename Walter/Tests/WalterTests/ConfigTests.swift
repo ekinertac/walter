@@ -24,6 +24,57 @@ struct ConfigTests {
         }
     }
 
+    @Test func excludedAppsAcceptNamesAndPaths() throws {
+        let fixture = try TemporaryDirectory()
+        let url = fixture.file("config.toml")
+        try """
+        [search]
+        excluded_apps = [ # comment
+            "/System/Applications/News.app",
+            # A literal name containing punctuation
+            'Another App',
+            "App # with, punctuation",
+        ] # trailing comment
+        show_path = false
+        """.write(to: url, atomically: true, encoding: .utf8)
+        let config = ConfigManager(configURL: url, watchForChanges: false)
+        #expect(config.search.excludedApps == ["/System/Applications/News.app", "Another App", "App # with, punctuation"])
+        #expect(!config.search.showPath)
+        try "[search]\nexcluded_apps = [\"/System/Applications/News.app\"]\n".write(to: url, atomically: true, encoding: .utf8)
+        config.reload()
+        #expect(config.search.excludedApps == ["/System/Applications/News.app"])
+        try "[search]\n".write(to: url, atomically: true, encoding: .utf8)
+        config.reload()
+        #expect(config.search.excludedApps.isEmpty)
+    }
+
+    @Test(arguments: [
+        "[]", "[ # empty\n]", "[\"News\",]", "['News', \"Calendar\"]"
+    ])
+    func validExclusionArrays(value: String) throws {
+        let fixture = try TemporaryDirectory()
+        let url = fixture.file("config.toml")
+        try "[search]\nexcluded_apps = \(value)\nshow_path = false\n".write(to: url, atomically: true, encoding: .utf8)
+        let config = ConfigManager(configURL: url, watchForChanges: false)
+        #expect(config.search.excludedApps.count == (value.contains("Calendar") ? 2 : value.contains("News") ? 1 : 0))
+        #expect(!config.search.showPath)
+    }
+
+    @Test(arguments: [
+        "News, Calendar", "\"News\"", "[News]", "[\"News\" \"Calendar\"]",
+        "[\"News\",,]", "[\"News\"] trailing", "[\"News\", 42]",
+        "[\"News\",", "[\n\"News\",", "[\"unterminated]", "[\"Back\\\\slash\"]"
+    ])
+    func invalidExclusionArraysDoNotHideAppsOrSwallowSettings(value: String) throws {
+        let fixture = try TemporaryDirectory()
+        let url = fixture.file("config.toml")
+        try "[search]\nexcluded_apps = \(value)\nshow_path = false\n[layout]\nmode = \"grid\"\n".write(to: url, atomically: true, encoding: .utf8)
+        let config = ConfigManager(configURL: url, watchForChanges: false)
+        #expect(config.search.excludedApps.isEmpty)
+        #expect(!config.search.showPath)
+        #expect(config.layout.mode == "grid")
+    }
+
     @Test func quotedAppHotkeysPreserveDuplicatesAndReload() throws {
         let fixture = try TemporaryDirectory()
         let url = fixture.file("config.toml")

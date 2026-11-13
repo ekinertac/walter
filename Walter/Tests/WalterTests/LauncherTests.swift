@@ -82,6 +82,35 @@ struct LauncherTests {
         #expect(opened.count == 1)
     }
 
+    @Test func appExclusionsMatchNamesOrFullPathsAndReload() throws {
+        let fixture = try TemporaryDirectory()
+        let url = fixture.file("config.toml")
+        try "[search]\nexcluded_apps = [\"/system/applications/news.APP\", \"cAlEnDaR\"]\n".write(to: url, atomically: true, encoding: .utf8)
+        let config = ConfigManager(configURL: url, watchForChanges: false)
+        let paths = ["/System/Applications/News.app", "/Applications/News.app", "/Applications/Calendar.app"]
+        let entries = paths.map { path in
+            let name = URL(fileURLWithPath: path).deletingPathExtension().lastPathComponent
+            return AppEntry(name: name, path: path, nameLower: name.lowercased(), icon: nil)
+        }
+        let engine = LauncherEngine(config: config, entries: { entries },
+            openURL: { _ in Issue.record("Unexpected handoff") })
+        func appPaths(_ query: String) -> [String] {
+            engine.search(query: query).compactMap {
+                if case .openApp(let path) = $0.action { return path }
+                return nil
+            }
+        }
+        #expect(appPaths("news") == ["/Applications/News.app"])
+        #expect(appPaths("calendar").isEmpty)
+        // An exclusion is not a prefix/folder match.
+        config.search.excludedApps = ["/System/Applications"]
+        #expect(Set(appPaths("news")) == Set(paths.prefix(2)))
+        try "[search]\n".write(to: url, atomically: true, encoding: .utf8)
+        config.reload()
+        #expect(Set(appPaths("news")) == Set(paths.prefix(2)))
+        #expect(appPaths("calendar") == ["/Applications/Calendar.app"])
+    }
+
     @Test func fuzzyRankingSettingsAndThemesRemain() throws {
         let fixture = try TemporaryDirectory()
         let config = ConfigManager(configURL: fixture.file("config.toml"), watchForChanges: false)

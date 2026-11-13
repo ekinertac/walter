@@ -30,6 +30,7 @@ final class ConfigManager {
     struct Search {
         var webSearch = "google"
         var showPath = true
+        // Case-insensitive display names or full indexed app paths.
         var excludedApps: [String] = []
     }
 
@@ -146,7 +147,11 @@ final class ConfigManager {
     [search]
     web_search = "google" # google | duckduckgo | bing | https://...{query}...
     show_path = true
-    # excluded_apps = Example, Another App
+    # Display names or full app paths (case-insensitive).
+    excluded_apps = [
+        # "/System/Applications/News.app",
+        # "Another App",
+    ]
 
     # Bookmark keywords are fuzzy-matched; only fixed HTTP(S) URLs are accepted.
     [bookmarks]
@@ -181,7 +186,11 @@ final class ConfigManager {
         guard let content = try? String(contentsOf: configURL, encoding: .utf8) else { return }
         var section = ""
         var aliasKey: String?
-        for line in content.components(separatedBy: .newlines) {
+        let lines = content.components(separatedBy: .newlines)
+        var lineIndex = 0
+        while lineIndex < lines.count {
+            let line = lines[lineIndex]
+            lineIndex += 1
             let trimmed = line.trimmingCharacters(in: .whitespaces)
             if trimmed.isEmpty || trimmed.hasPrefix("#") { continue }
             if trimmed.hasPrefix("["), trimmed.hasSuffix("]") {
@@ -211,6 +220,20 @@ final class ConfigManager {
             guard parts.count == 2 else { continue }
             let key = parts[0].trimmingCharacters(in: .whitespaces)
             var raw = parts[1].trimmingCharacters(in: .whitespaces)
+            if section == "search", key == "excluded_apps" {
+                // Consume only array continuation lines, so an unfinished array
+                // cannot swallow subsequent settings or sections.
+                if raw.hasPrefix("[") {
+                    while Self.parseExcludedApps(raw).needsMore, lineIndex < lines.count {
+                        let next = lines[lineIndex].trimmingCharacters(in: .whitespaces)
+                        guard next.isEmpty || ["\"", "'", ",", "]", "#"].contains(where: { next.hasPrefix($0) }) else { break }
+                        raw += "\n" + lines[lineIndex]
+                        lineIndex += 1
+                    }
+                }
+                search.excludedApps = Self.parseExcludedApps(raw).values ?? []
+                continue
+            }
             let quotes: Set<Character> = ["\"", "\u{201C}", "\u{201D}"]
             if let first = raw.first, quotes.contains(first) {
                 if let close = raw.dropFirst().firstIndex(where: { quotes.contains($0) }) { raw = String(raw[...close]) }
@@ -246,7 +269,6 @@ final class ConfigManager {
             case ("keybindings", "close"): keybindings.close = value
             case ("search", "web_search"): search.webSearch = value
             case ("search", "show_path"): search.showPath = value == "true"
-            case ("search", "excluded_apps"): search.excludedApps = value.split(separator: ",").map { $0.trimmingCharacters(in: .whitespaces) }
             default: break
             }
         }
@@ -255,6 +277,45 @@ final class ConfigManager {
             if let s = preset.selection { theme.selection = s }
             if let s = preset.subtitle { theme.subtitle = s }
             if let b = preset.border { theme.border = b }
+        }
+    }
+
+    /// String-array subset for exclusions: basic/literal strings without escapes,
+    /// comments, newlines, and an optional trailing comma. Never accept a prefix
+    /// of a malformed array or fall back to the removed comma-separated syntax.
+    private static func parseExcludedApps(_ source: String) -> (values: [String]?, needsMore: Bool) {
+        var rest = source[...]
+        func skipTrivia() {
+            while true {
+                rest = rest.drop(while: { $0.isWhitespace })
+                guard rest.first == "#" else { return }
+                rest = rest.drop(while: { $0 != "\n" })
+            }
+        }
+        skipTrivia()
+        guard rest.first == "[" else { return (nil, false) }
+        rest = rest.dropFirst()
+        var values: [String] = []
+        while true {
+            skipTrivia()
+            guard let first = rest.first else { return (nil, true) }
+            if first == "]" {
+                rest = rest.dropFirst()
+                skipTrivia()
+                return rest.isEmpty ? (values, false) : (nil, false)
+            }
+            guard first == "\"" || first == "'" else { return (nil, false) }
+            rest = rest.dropFirst()
+            let value = rest.prefix(while: { $0 != first && $0 != "\n" && $0 != "\r" })
+            guard !value.contains("\\"), !value.contains(where: { $0.asciiValue.map { $0 < 32 && $0 != 9 || $0 == 127 } ?? false }) else { return (nil, false) }
+            rest = rest.dropFirst(value.count)
+            guard rest.first == first else { return (nil, false) }
+            values.append(String(value))
+            rest = rest.dropFirst()
+            skipTrivia()
+            guard let separator = rest.first else { return (nil, true) }
+            if separator == "," { rest = rest.dropFirst() }
+            else if separator != "]" { return (nil, false) }
         }
     }
 

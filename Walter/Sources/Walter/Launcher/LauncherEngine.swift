@@ -109,7 +109,7 @@ final class LauncherEngine {
         }
         InputTiming.shared.measure(.apps) {
             let excluded = Set(config.search.excludedApps.map { $0.lowercased() })
-            for entry in entries() where !excluded.contains(entry.nameLower) {
+            for entry in entries() where !excluded.contains(entry.nameLower) && !excluded.contains(entry.path.lowercased()) {
                 let match = fuzzyMatch(query: q, target: entry.name)
                 if match.matched {
                     scored.append((SearchResult(title: entry.name,

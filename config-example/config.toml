@@ -28,7 +28,11 @@ close = "Escape"
 [search]
 web_search = "google"
 show_path = true
-# excluded_apps = Example, Another App
+# Display names or full app paths (case-insensitive).
+excluded_apps = [
+    # "/System/Applications/News.app",
+    # "Another App",
+]
 
 # Bookmark keywords are fuzzy-matched; only fixed HTTP(S) URLs are accepted.
 [bookmarks]
