@@ -20,3 +20,6 @@ core/target/
 .agents/
 marketing/
 skills-lock.json
+
+# mkdown artifacts (auto-managed)
+CHANGELOG.html
