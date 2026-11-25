@@ -22,7 +22,8 @@ struct SearchResult {
     let icon: NSImage?
     let action: ResultAction
     /// Full query text that Tab puts in the search field when this result
-    /// is selected (GitHub owner/repo, qwok app). nil = Tab does nothing.
+    /// is selected (GitHub owner/repo, qwok app, command word). When nil,
+    /// Tab uses another row's completion; see CommandCompletion.tab.
     var completion: String? = nil
 }
 
@@ -35,6 +36,7 @@ enum ResultAction {
     case systemCommand(SystemCommand)
     case enterThemePicker          // switches UI to theme browsing mode
     case applyTheme(String)        // applies a theme by name and writes to config
+    case complete(String)          // puts text in the search field and keeps the panel open
 
     /// True for message rows ("Loading…", "No match"), which carry an empty
     /// copy. Running it would silently erase the user's clipboard.
@@ -298,7 +300,7 @@ class LauncherEngine {
         scored.sort { $0.score > $1.score }
 
         var results = pinnedTop
-        results += scored.prefix(25).map { $0.result }
+        results += CommandCompletion.inserting(commandRows(query: q), into: scored.prefix(25).map { $0.result })
 
         // ----- Pinned bottom: web search fallback -----------------------
 
@@ -393,6 +395,23 @@ class LauncherEngine {
                              action: .url("https://github.com/\(owner)/\(name)"),
                              completion: prefix + owner + " " + name)
             }
+        }
+    }
+
+    /// Builds a row for each command word that `query` abbreviates ("rp",
+    /// "qw"). Order of words = order of the mode checks in `search`.
+    private func commandRows(query: String) -> [SearchResult] {
+        let github = config?.search.githubPrefix ?? ""
+        let qwok = config?.search.qwokPrefix ?? ""
+        return CommandCompletion.matching(query, words: [github, qwok]).map { word in
+            let isGitHub = word == github
+            return SearchResult(
+                title: word,
+                subtitle: (isGitHub ? "Open a GitHub repo" : "Open a qwok app") + " — Tab to start",
+                icon: NSImage(systemSymbolName: isGitHub ? "chevron.left.forwardslash.chevron.right" : "bolt.horizontal",
+                              accessibilityDescription: word),
+                action: .complete(word + " "),
+                completion: word + " ")
         }
     }
 
@@ -575,7 +594,7 @@ class LauncherEngine {
                 guard SystemCommands.confirm(action: cmd.name) else { return }
             }
             cmd.action()
-        case .enterThemePicker, .applyTheme:
+        case .enterThemePicker, .applyTheme, .complete:
             // Handled by LauncherPanelController, not here
             break
         }

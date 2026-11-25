@@ -137,7 +137,7 @@ while the launcher is open:
 | `Cmd+1` … `Cmd+9` | Jump to and activate the Nth visible result (hint shown on each row) |
 | `Cmd+C` | Copy the selected result's value — file/app path, alias URL, shell command, or computed answer. When text is selected in the search field, defers to normal text copy. |
 | `Cmd+V` | Paste into the search field |
-| `Tab` | Complete the selected GitHub owner or repo, or qwok app, into the search field (see [`github_prefix`](#github_prefix) and [`qwok_prefix`](#qwok_prefix)) |
+| `Tab` | Complete a command word (`qw` → `qwok `, `rp` → `repo `), or the selected GitHub owner or repo, or qwok app, into the search field (see [`github_prefix`](#github_prefix) and [`qwok_prefix`](#qwok_prefix)) |
 | `↑` / `↓` | Move selection (list and grid) |
 | `←` / `→` | Move the text cursor; in grid mode, move between tiles when a tile is selected |
 | `Esc` | Close the launcher (or exit theme-preview / file mode) |

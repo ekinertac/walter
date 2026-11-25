@@ -9,6 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 - **qwok URL search.** Type `qwok b2` to list the apps registered in [qwok](https://github.com/ekinertac/qwok) that have a URL, `Tab` to complete a name, and `Enter` to open the URL. Walter does not start stopped apps. Prefix set by `[search] qwok_prefix`, empty turns it off.
+- **Command words complete with `Tab`.** Typing `qw` or `rp` offers `qwok` or `repo` as a row below the best result. `Tab` completes it from any selected row, and `Enter` on the row does the same.
 
 ### Fixed
 - **`Enter` on a message row no longer erases the clipboard.** Rows such as "Loading your GitHub repos…" copied an empty string.

@@ -528,6 +528,9 @@ class LauncherPanelController: NSObject {
             hide()
             return
 
+        case .complete(let text):
+            complete(with: text)
+
         default:
             // Hide first so the panel disappears instantly on selection,
             // then launch async so NSWorkspace.open() doesn't stall the UI.
@@ -535,6 +538,15 @@ class LauncherPanelController: NSObject {
             hide()
             DispatchQueue.main.async { self.launcher.launch(result: result) }
         }
+    }
+
+    /// Replaces the query with completed text, puts the cursor at its end
+    /// and searches again.
+    private func complete(with text: String) {
+        searchField.stringValue = text
+        searchField.currentEditor()?.selectedRange = NSRange(location: (text as NSString).length, length: 0)
+        adjustInputFontSize()
+        updateResults(query: text)
     }
 
     /// Records the current query into history. Skipped while the theme
@@ -615,7 +627,7 @@ class LauncherPanelController: NSObject {
         case .url(let u):          text = u
         case .copy(let v):         text = v
         case .shell(let c):        text = c
-        case .systemCommand, .enterThemePicker, .applyTheme: text = nil
+        case .systemCommand, .enterThemePicker, .applyTheme, .complete: text = nil
         }
         guard let text, !text.isEmpty else { return false }
         NSPasteboard.general.clearContents()
@@ -682,16 +694,14 @@ extension LauncherPanelController: NSTextFieldDelegate {
             // here because AppKit routes Cmd-modified keys as key-equivalents.
             confirmSelection(); return true
         }
-        // Tab completes: it puts the selected result's `completion` text
-        // into the field (GitHub owner/repo). It used to move the selection,
-        // which the arrow keys already do. Both Tab keys are always
+        // Tab completes: it puts a result's `completion` text into the field
+        // (GitHub owner/repo, qwok app, command word). It used to move the
+        // selection, which the arrow keys already do. Both Tab keys are always
         // swallowed so AppKit doesn't move focus out of the search field.
         if commandSelector == #selector(NSResponder.insertTab(_:)) {
-            if let completion = resultsView.result(at: selectedIndex)?.completion {
-                searchField.stringValue = completion
-                textView.selectedRange = NSRange(location: (completion as NSString).length, length: 0)
-                adjustInputFontSize()
-                updateResults(query: completion)
+            let results = (0..<resultsView.resultCount).compactMap { resultsView.result(at: $0) }
+            if let completion = CommandCompletion.tab(results, selected: selectedIndex) {
+                complete(with: completion)
             }
             return true
         }
