@@ -5,7 +5,7 @@ All notable changes to Walter are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [1.9.0] — 2026-11-25
 
 ### Added
 - **qwok URL search.** Type `qwok b2` to list the apps registered in [qwok](https://github.com/ekinertac/qwok) that have a URL, `Tab` to complete a name, and `Enter` to open the URL. Walter does not start stopped apps. Prefix set by `[search] qwok_prefix`, empty turns it off.
