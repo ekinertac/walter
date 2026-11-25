@@ -70,6 +70,9 @@ class ConfigManager {
         /// Word that starts GitHub repo search when followed by a space
         /// ("repo hum"). Needs the gh CLI; empty disables the feature.
         var githubPrefix: String = "repo"
+        /// Word that starts qwok URL search when followed by a space
+        /// ("qwok b2"). Needs the qwok CLI; empty disables the feature.
+        var qwokPrefix: String = "qwok"
     }
 
     struct General {
@@ -271,6 +274,10 @@ file_dirs            = ~/Documents, ~/Desktop, ~/Downloads
 # login (brew install gh && gh auth login). Empty disables it.
 # github_prefix      = "repo"
 
+# Word that starts qwok URL search: "qwok b2" lists apps registered in qwok
+# that have a URL, Tab completes, Enter opens it. Empty disables it.
+# qwok_prefix        = "qwok"
+
 # ---------------------------------------------------------------------------
 # Aliases
 # ---------------------------------------------------------------------------
@@ -461,6 +468,8 @@ file_dirs            = ~/Documents, ~/Desktop, ~/Downloads
             case ("search", "github_prefix"):
                 // One word; anything after a space could never be typed as a prefix.
                 search.githubPrefix = String(value.split(separator: " ").first ?? "")
+            case ("search", "qwok_prefix"):
+                search.qwokPrefix = String(value.split(separator: " ").first ?? "")
             // Aliases — flat form: `key = "value"`
             case ("aliases", _):             aliases[key] = value
             // Aliases — sub-table form: `[aliases.<key>]` then `name = ...` /

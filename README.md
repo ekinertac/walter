@@ -164,6 +164,7 @@ url  = "https://www.youtube.com/results?search_query={query}"
 | Paste into search | Cmd+V |
 | File search | Type `` ` `` then a filename (prefix configurable) |
 | GitHub repos | Type `repo hum`, Tab to complete the owner, type a repo name, Tab, Enter (needs `gh` CLI) |
+| qwok apps | Type `qwok b2`, Tab to complete the name, Enter to open its URL (needs [`qwok`](https://github.com/ekinertac/qwok)) |
 | Close | Escape |
 | Open config | Cmd+, |
 | Change theme | Type "theme", browse with arrows, Enter to confirm, Esc to revert |

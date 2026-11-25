@@ -22,7 +22,7 @@ struct SearchResult {
     let icon: NSImage?
     let action: ResultAction
     /// Full query text that Tab puts in the search field when this result
-    /// is selected (GitHub owner/repo completion). nil = Tab does nothing.
+    /// is selected (GitHub owner/repo, qwok app). nil = Tab does nothing.
     var completion: String? = nil
 }
 
@@ -35,6 +35,13 @@ enum ResultAction {
     case systemCommand(SystemCommand)
     case enterThemePicker          // switches UI to theme browsing mode
     case applyTheme(String)        // applies a theme by name and writes to config
+
+    /// True for message rows ("Loading…", "No match"), which carry an empty
+    /// copy. Running it would silently erase the user's clipboard.
+    var isInert: Bool {
+        if case .copy(let text) = self { return text.isEmpty }
+        return false
+    }
 }
 
 class LauncherEngine {
@@ -42,6 +49,7 @@ class LauncherEngine {
     private let appIndex: AppIndex
     private let fileIndex: FileIndex
     private let githubIndex: GitHubIndex
+    private let qwokIndex: QwokIndex
     private let frecency = FrecencyTracker()
     private let calculator = Calculator()
     private let converter = Converter()
@@ -63,13 +71,16 @@ class LauncherEngine {
         appIndex = AppIndex(extraDirs: extraAppDirs, onChange: onIndexChanged)
         fileIndex = FileIndex(dirs: config.search.fileDirs, onChange: onIndexChanged)
         githubIndex = GitHubIndex(onChange: onIndexChanged)
+        qwokIndex = QwokIndex(onChange: onIndexChanged)
     }
 
     /// Forwards a refresh request to the underlying app index. The
     /// panel controller calls this on every show so a freshly-installed
     /// app appears immediately even when FSEvents missed the install.
+    /// The qwok list is only marked old; a qwok query fetches it.
     func refreshIndexes() {
         appIndex.refresh()
+        qwokIndex.invalidate()
     }
 
     func search(query: String) -> [SearchResult] {
@@ -81,6 +92,12 @@ class LauncherEngine {
         let leading = String(query.drop(while: { $0 == " " }))
         if ghPrefix.count > 1, leading.lowercased().hasPrefix(ghPrefix.lowercased()) {
             return githubResults(rest: String(leading.dropFirst(ghPrefix.count)), prefix: ghPrefix)
+        }
+
+        // qwok mode: also on the raw query, because "qwok " lists every app.
+        let qwokPrefix = config?.search.qwokPrefix ?? ""
+        if let word = QwokList.word(in: query, prefix: qwokPrefix) {
+            return qwokResults(word: word, prefix: qwokPrefix)
         }
 
         let q = query.trimmingCharacters(in: .whitespaces)
@@ -376,6 +393,45 @@ class LauncherEngine {
                              action: .url("https://github.com/\(owner)/\(name)"),
                              completion: prefix + owner + " " + name)
             }
+        }
+    }
+
+    /// Builds one row per matching qwok app with a URL for "<prefix> [word]"
+    /// queries. Enter opens the app's URL, Tab completes its name.
+    private func qwokResults(word: String, prefix: String) -> [SearchResult] {
+        qwokIndex.ensureFresh()
+
+        func message(_ title: String, _ subtitle: String, symbol: String, copy: String) -> [SearchResult] {
+            [SearchResult(title: title, subtitle: subtitle,
+                          icon: NSImage(systemSymbolName: symbol, accessibilityDescription: title),
+                          action: .copy(copy))]
+        }
+
+        let apps: [QwokApp]
+        switch qwokIndex.state {
+        case .ready(let list):
+            apps = list
+        case .loading:
+            return message("Loading your qwok apps…", "", symbol: "arrow.triangle.2.circlepath", copy: "")
+        case .qwokMissing:
+            let install = "brew install ekinertac/tap/qwok"
+            return message("qwok is not installed", "Run: \(install) — Enter to copy",
+                           symbol: "exclamationmark.triangle", copy: install)
+        case .failed(let error):
+            return message("Couldn't load qwok apps", error, symbol: "exclamationmark.triangle", copy: error)
+        }
+        if apps.isEmpty {
+            return message("No qwok app has a URL", "Add one with: qwok add", symbol: "bolt.horizontal", copy: "")
+        }
+
+        let matches = QwokList.matching(apps, word: word)
+        if matches.isEmpty {
+            return message("No qwok app matches \"\(word)\"", "", symbol: "bolt.horizontal", copy: "")
+        }
+        let icon = NSImage(systemSymbolName: "bolt.horizontal", accessibilityDescription: "qwok")
+        return matches.map { app in
+            SearchResult(title: app.name, subtitle: app.url, icon: icon,
+                         action: .url(app.url), completion: "\(prefix) \(app.name)")
         }
     }
 

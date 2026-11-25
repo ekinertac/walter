@@ -505,7 +505,7 @@ class LauncherPanelController: NSObject {
     }
 
     private func confirmSelection() {
-        guard let result = resultsView.result(at: selectedIndex) else { return }
+        guard let result = resultsView.result(at: selectedIndex), !result.action.isInert else { return }
 
         switch result.action {
         case .enterThemePicker:

@@ -22,4 +22,8 @@ marketing/
 skills-lock.json
 
 # mkdown artifacts (auto-managed)
+docs/config.html
+README.html
+docs/superpowers/plans/2026-11-25-qwok-urls.html
+docs/superpowers/specs/2026-11-25-qwok-urls-design.html
 CHANGELOG.html

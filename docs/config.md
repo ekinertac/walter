@@ -137,7 +137,7 @@ while the launcher is open:
 | `Cmd+1` … `Cmd+9` | Jump to and activate the Nth visible result (hint shown on each row) |
 | `Cmd+C` | Copy the selected result's value — file/app path, alias URL, shell command, or computed answer. When text is selected in the search field, defers to normal text copy. |
 | `Cmd+V` | Paste into the search field |
-| `Tab` | Complete the selected GitHub owner or repo into the search field (see [`github_prefix`](#github_prefix)) |
+| `Tab` | Complete the selected GitHub owner or repo, or qwok app, into the search field (see [`github_prefix`](#github_prefix) and [`qwok_prefix`](#qwok_prefix)) |
 | `↑` / `↓` | Move selection (list and grid) |
 | `←` / `→` | Move the text cursor; in grid mode, move between tiles when a tile is selected |
 | `Esc` | Close the launcher (or exit theme-preview / file mode) |
@@ -183,6 +183,7 @@ Behavior of the search engine, app indexer, and trailing fallback row.
 | `file_dirs`            | csv    | unset (= disabled)                    | Directories indexed for prefix-triggered file search. Fresh installs get `~/Documents, ~/Desktop, ~/Downloads` in the generated config. |
 | `file_prefix`          | string | `` "`" ``                             | Single character that activates file-search mode when typed first. |
 | `github_prefix`        | string | `"repo"`                              | Word that starts GitHub repo search when followed by a space. Empty disables it. |
+| `qwok_prefix`          | string | `"qwok"`                              | Word that starts qwok URL search when followed by a space. Empty disables it. |
 
 ### `web_search`
 
@@ -320,6 +321,18 @@ same key; rename one of them if they clash.
 
 ```toml
 github_prefix = "repo"   # set to "" to turn GitHub search off
+```
+
+### `qwok_prefix`
+
+Type the prefix and a space to list the apps registered in [qwok](https://github.com/ekinertac/qwok) that have a URL, then part of a name to filter: `qwok b2`. `Tab` completes the selected name, `Enter` opens its URL, and `Cmd+C` copies the URL. Walter does not start apps, so the browser shows an error page if the app or the portless proxy is stopped. Desktop apps (`type = "app"`) are listed only when their `.qwok.toml` has a `url` line.
+
+The list comes from `qwok list` and is fetched again at the first qwok query after you open Walter. Walter looks for qwok and portless in `/opt/homebrew/bin` and `/usr/local/bin`. If portless is installed somewhere else, the URL can have the wrong port.
+
+As with `github_prefix`, the prefix alone still searches apps, and it shadows an alias with the same key.
+
+```toml
+qwok_prefix = "qwok"   # set to "" to turn qwok search off
 ```
 
 ---

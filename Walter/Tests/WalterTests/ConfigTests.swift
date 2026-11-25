@@ -2,7 +2,7 @@ import Testing
 import AppKit
 @testable import Walter
 
-@Suite("ConfigManager")
+@Suite("ConfigManager", .serialized)
 struct ConfigTests {
 
     @Test func defaultValues() {
@@ -34,5 +34,25 @@ struct ConfigTests {
     @Test func spotlightIsTransparent() {
         let spotlight = builtinThemes["spotlight"]!
         #expect(spotlight.background.contains("00000000"))
+    }
+
+    /// Sets WALTER_CONFIG, which is process-wide. The suite is serialized
+    /// because a parallel `ConfigManager()` would write its default template
+    /// into this test's file.
+    @Test func qwokPrefixParsing() throws {
+        let dir = FileManager.default.temporaryDirectory.appendingPathComponent("walter-config-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        let file = dir.appendingPathComponent("config.toml")
+        let previous = ProcessInfo.processInfo.environment["WALTER_CONFIG"]
+        setenv("WALTER_CONFIG", file.path, 1)
+        defer {
+            if let previous { setenv("WALTER_CONFIG", previous, 1) } else { unsetenv("WALTER_CONFIG") }
+            try? FileManager.default.removeItem(at: dir)
+        }
+
+        for (line, expected) in [("qwok_prefix = \"dev x\"", "dev"), ("qwok_prefix = \"\"", ""), ("", "qwok")] {
+            try "[search]\n\(line)\n".write(to: file, atomically: true, encoding: .utf8)
+            #expect(ConfigManager().search.qwokPrefix == expected)
+        }
     }
 }
